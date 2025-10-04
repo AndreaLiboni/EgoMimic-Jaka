@@ -244,6 +244,8 @@ class BaseConfig(Config):
         self.train.num_epochs = 2000  # number of training epochs
         self.train.seed = 1  # seed for training (for reproducibility)
 
+        self.train.imagenet_normalize_images = False
+
     def algo_config(self):
         """
         This function populates the `config.algo` attribute of the config, and is given to the

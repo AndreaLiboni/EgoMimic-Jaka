@@ -12,6 +12,7 @@ from sam2.build_sam import build_sam2_video_predictor, build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from egomimic.utils.egomimicUtils import AlohaFK, JakaFK, ee_pose_to_cam_pixels, ARIA_INTRINSICS, EXTRINSICS, ee_pose_to_cam_frame, cam_frame_to_cam_pixels, draw_dot_on_frame
 import cv2
+import random
 
 def get_bounds(binary_image):
     # gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -70,62 +71,139 @@ def line_on_hand(images, masks, arm):
     return overlayed_imgs
 
 def get_valid_points(points, img_shape):
-    """
-    tuple of 3 (x,y) points
-    """
-    pt1, pt2, pt3 = points
-    keep_pt1 =True
-    keep_pt2 =True
-    keep_pt3 =True
-
-    if (pt1[0][0] < 0 or pt1[0][0] >= img_shape[1]) or (pt1[0][1] < 0 or pt1[0][1] >= img_shape[0]):
-        keep_pt1 = False
-    if (pt2[0][0] < 0 or pt2[0][0] >= img_shape[1]) or (pt2[0][1] < 0 or pt2[0][1] >= img_shape[0]):
-        keep_pt2 = False
-    if (pt3[0][0] < 0 or pt3[0][0] >= img_shape[1]) or (pt3[0][1] < 0 or pt3[0][1] >= img_shape[0]):
-        keep_pt3 = False
-
-    if keep_pt1 and keep_pt2 and keep_pt3:
-        # print("1st case")
-        input_point = np.concatenate([pt1, pt2, pt3], axis=0)
-        input_label = np.array([1, 1, 1])
-    elif keep_pt1 and not keep_pt2 and keep_pt3:
-        # print("2nd case")
-        input_point = np.concatenate([pt1, pt3], axis=0)
-        input_label = np.array([1, 1])
-    elif not keep_pt1 and keep_pt2 and keep_pt3:
-        # print("3rd case")
-        input_point = np.concatenate([pt3], axis=0)
-        input_label = np.array([1])
-    elif keep_pt1 and keep_pt2 and not keep_pt3:
-        # print("4th case")
-        input_point = np.concatenate([pt1, pt2], axis=0)
-        input_label = np.array([1, 1])
-    elif keep_pt1 and not keep_pt2 and not keep_pt3:
-        # print("5th case")
-        input_point = pt1
-        input_label = np.array([1])
-    elif not keep_pt1 and keep_pt2 and not keep_pt3:
-        # print("6th case")
-        input_point = pt2
-        input_label = np.array([1])
-    elif not keep_pt1 and not keep_pt2 and keep_pt3:
-        # print("7th case")
-        input_point = pt3
-        input_label = np.array([1])
-    else:
-        # print("8th case")
-        input_point = np.array([])
-        input_label = np.array([])
-
+    height, width = img_shape[:2]
+    
+    # Stack list of arrays into a single (N, 2) array
+    # Assuming input is list of (1,2) arrays, we use vstack
+    pts_arr = np.vstack(points) 
+    
+    # Create a boolean mask for X and Y bounds
+    # x is column 0, y is column 1
+    x_valid = (pts_arr[:, 0] >= 0) & (pts_arr[:, 0] < width)
+    y_valid = (pts_arr[:, 1] >= 0) & (pts_arr[:, 1] < height)
+    
+    # Combine masks (Point must be valid in both X and Y)
+    valid_mask = x_valid & y_valid
+    
+    # Apply mask to select points
+    input_point = pts_arr[valid_mask]
+    
+    # Create labels (all 1s) matching the number of valid points
+    input_label = np.ones(input_point.shape[0], dtype=int)
+    
+    # Handle the empty case if needed (NumPy usually handles empty slices fine, 
+    # but if you specifically need empty arrays instead of (0,2) shape):
+    if len(input_point) == 0:
+        return np.array([]), np.array([])
+        
     return input_point, input_label
+
+def get_negative_prompts(all_joint_points, img_shape, num_points=10, box_offset=50):
+    """
+    Generates random negative points that are strictly OUTSIDE the bounding box 
+    formed by the robot joints + an offset buffer.
+    """
+    h, w = img_shape[:2]
+    
+    # Stack all points to find the global min/max
+    if isinstance(all_joint_points, list):
+        # Filter out any empty arrays if segments were skipped
+        valid_arrays = [x for x in all_joint_points if x.size > 0]
+        if not valid_arrays:
+            return np.empty((0, 2)), np.empty((0,))
+        all_pts = np.vstack(valid_arrays)
+    else:
+        all_pts = all_joint_points
+
+    if all_pts.shape[0] == 0:
+            return np.empty((0, 2)), np.empty((0,))
+
+    # 1. Calculate Bounding Box of the Robot
+    min_x, min_y = np.min(all_pts, axis=0)
+    max_x, max_y = np.max(all_pts, axis=0)
+    
+    # 2. Expand Box by Offset (The "Danger Zone")
+    danger_x1 = max(0, min_x - box_offset)
+    danger_y1 = max(0, min_y - box_offset)
+    danger_x2 = min(w, max_x + box_offset*2.5)
+    danger_y2 = min(h, max_y + box_offset)
+    
+    neg_points = []
+    
+    # 3. Generate Random Points OUTSIDE the Danger Zone
+    # We try a set number of times to find valid points
+    max_attempts = num_points * 5 
+    attempts = 0
+    
+    while len(neg_points) < num_points and attempts < max_attempts:
+        attempts += 1
+        rx = np.random.randint(0, w)
+        ry = np.random.randint(0, h)
+        
+        # Check if point is INSIDE the box
+        is_inside_box = (rx >= danger_x1 and rx <= danger_x2) and \
+                        (ry >= danger_y1 and ry <= danger_y2)
+        
+        if not is_inside_box:
+            neg_points.append([rx, ry])
+            
+    if not neg_points:
+        return np.empty((0, 2)), np.empty((0,))
+
+    return np.array(neg_points), np.zeros(len(neg_points))
+
+
+def interpolate_dense_path(points, density=5):
+    """
+    Interpolates points between an arbitrary number of sequential keypoints.
+    
+    Args:
+        points: Numpy array of shape (N, 2) containing N keypoints (x, y).
+        density: Number of intermediate points to generate between each pair.
+        
+    Returns:
+        dense_points: (M, 2) array of original + interpolated points.
+        labels: (M,) array of 1s (positive prompts).
+    """
+    # Ensure input is correct shape (N, 2)
+    points = np.atleast_2d(points)
+    
+    if points.shape[0] < 2:
+        # If only 1 point, cannot interpolate, return as is
+        return points, np.array([1])
+
+    dense_points_list = []
+
+    # Iterate through each pair of points (0->1, 1->2, 2->3...)
+    for i in range(len(points) - 1):
+        p_start = points[i]
+        p_end = points[i+1]
+        
+        # Create linear interpolation
+        # num=density+2 includes the start and end points
+        segment = np.linspace(p_start, p_end, num=density+2)
+        
+        # If this is not the first segment, remove the first point 
+        # (because it was the last point of the previous segment)
+        if i > 0:
+            segment = segment[1:]
+            
+        dense_points_list.append(segment)
+
+    # Stack all segments into one array (M, 2)
+    dense_points = np.vstack(dense_points_list)
+    
+    # Generate labels (all 1s because they are all part of the robot)
+    labels = np.ones(dense_points.shape[0])
+    
+    return dense_points, labels
 
 class SAM:
     def __init__(self):
         sam2_checkpoint = os.path.join(
-            os.path.dirname(egomimic.__file__), "resources/sam2_hiera_tiny.pt"
+            os.path.dirname(egomimic.__file__), "resources/sam2.1_hiera_tiny.pt"
         )
-        model_cfg = "sam2_hiera_t.yaml"
+        model_cfg = "configs/sam2.1/sam2.1_hiera_t.yaml"
 
         sam2_model = build_sam2(model_cfg, sam2_checkpoint, device="cuda")
 
@@ -254,12 +332,24 @@ class SAM:
         Returns:
         Masked image, masks, scores, logits
         """
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.predictor.set_image(image)
+
+        img_point = image.copy()
+        for point, lb in zip(points, label):
+            img_point = cv2.circle(
+                img_point,
+                (int(point[0]), int(point[1])),
+                radius=5,
+                color=(0, 255, 255*lb),
+            )
+        cv2.imwrite("img_point.png", img_point)
+        cv2.waitKey(1)
 
         masks, scores, logits = self.predictor.predict(
             point_coords=points,
             point_labels=label,
-            multimask_output=True,
+            multimask_output=False,
         )
         sorted_ind = np.argsort(scores)[::-1]
         masks = masks[sorted_ind]
@@ -268,7 +358,7 @@ class SAM:
         
         masked_img = image
         masked_img[masks[0] == 1] = 0
-
+        cv2.imwrite("masked_img.png", image)
         return masked_img, masks, scores, logits
     
 
@@ -446,43 +536,135 @@ class SAMJaka(SAM):
         self.fk = JakaFK()
     
     def project_single_joint_position_to_image(self, qpos, extrinsics, intrinsics, arm="right"):
+        # Forward Kinematics to get all link transforms
         joint_pos = self.fk.chain.forward_kinematics(qpos, end_only=False)
 
-        fk_positions = joint_pos['custom_ee_link'].get_matrix()[:, :3, 3] # used
-        wrist_positions = joint_pos['Link_06'].get_matrix()[:, :3, 3]
-        elbow_positions = joint_pos['Link_03'].get_matrix()[:, :3, 3] # used
-        arm_positions = joint_pos['Link_02'].get_matrix()[:, :3, 3] # used
-        lower_forearm_positions = joint_pos['Link_04'].get_matrix()[:, :3, 3]
-
-
-        fk_positions = ee_pose_to_cam_frame(fk_positions, extrinsics)[:, :3]
-        wrist_positions = ee_pose_to_cam_frame(wrist_positions, extrinsics)[:, :3]
-        elbow_positions = ee_pose_to_cam_frame(elbow_positions, extrinsics)[:, :3]
-        arm_positions = ee_pose_to_cam_frame(arm_positions, extrinsics)[:, :3]
-        lower_forearm_positions = ee_pose_to_cam_frame(lower_forearm_positions, extrinsics)[:, :3]
-
-        px_val_gripper = cam_frame_to_cam_pixels(fk_positions, intrinsics)[:, :2]
-        px_val_wrist = cam_frame_to_cam_pixels(wrist_positions, intrinsics)[:, :2]
-        px_val_elbow = cam_frame_to_cam_pixels(elbow_positions, intrinsics)[:, :2]
-        px_val_arm = cam_frame_to_cam_pixels(arm_positions, intrinsics)[:, :2]
-        px_val_lower_forearm = cam_frame_to_cam_pixels(lower_forearm_positions, intrinsics)[:, :2]
-
-        if arm == "right":
-            px_dict = {
-                "px_val_gripper_right": px_val_gripper,
-                "px_val_wrist_right": px_val_wrist,
-                "px_val_elbow_right": px_val_elbow,
-                "px_val_arm_right": px_val_arm,
-                "px_val_lower_forearm_right": px_val_lower_forearm,
-            }
-        elif arm == "left":
-            px_dict = {
-                "px_val_gripper_left": px_val_gripper,
-                "px_val_wrist_left": px_val_wrist,
-                "px_val_elbow_left": px_val_elbow,
-                "px_val_arm_left": px_val_arm,
-                "px_val_lower_forearm_left": px_val_lower_forearm,
-            }
+        # 1. Get 3D positions
+        # Note: 'base_link' is the bottom of the robot. 
+        # 'Link_01' is the shoulder (approx 14cm up).
+        # 'Link_02' is skipped because it is at (0,0,0) relative to Link_01.
+        
+        # Check if base_link is in the dict (depends on FK library), otherwise use identity or Link_01 parent
+        if 'base_link' in joint_pos:
+            base_positions = joint_pos['base_link'].get_matrix()[:, :3, 3]
         else:
-            raise ValueError("Arm must be either 'right' or 'left'")
+            # Fallback: If chain doesn't return base_link, assume it is at (0,0,0) in robot frame
+            # This requires transforming (0,0,0) by the extrinsic only, 
+            # or simply using Link_01 offset downwards if simpler. 
+            # Usually FK libraries return the root link.
+            base_positions = np.zeros_like(joint_pos['Link_01'].get_matrix()[:, :3, 3])
+
+        shoulder_positions = joint_pos['Link_01'].get_matrix()[:, :3, 3]
+        elbow_positions    = joint_pos['Link_03'].get_matrix()[:, :3, 3]
+        forearm_positions  = joint_pos['Link_04'].get_matrix()[:, :3, 3]
+        wrist_positions    = joint_pos['Link_05'].get_matrix()[:, :3, 3]
+        hand_positions     = joint_pos['Link_06'].get_matrix()[:, :3, 3]
+        fk_positions       = joint_pos['custom_ee_link'].get_matrix()[:, :3, 3]
+
+        # 2. Transform to Camera Frame
+        base_positions     = ee_pose_to_cam_frame(base_positions, extrinsics)[:, :3]
+        shoulder_positions = ee_pose_to_cam_frame(shoulder_positions, extrinsics)[:, :3]
+        elbow_positions    = ee_pose_to_cam_frame(elbow_positions, extrinsics)[:, :3]
+        forearm_positions  = ee_pose_to_cam_frame(forearm_positions, extrinsics)[:, :3]
+        wrist_positions    = ee_pose_to_cam_frame(wrist_positions, extrinsics)[:, :3]
+        hand_positions     = ee_pose_to_cam_frame(hand_positions, extrinsics)[:, :3]
+        fk_positions       = ee_pose_to_cam_frame(fk_positions, extrinsics)[:, :3]
+
+        # 3. Project to Pixels
+        px_val_base     = cam_frame_to_cam_pixels(base_positions, intrinsics)[:, :2]
+        px_val_shoulder = cam_frame_to_cam_pixels(shoulder_positions, intrinsics)[:, :2]
+        px_val_elbow    = cam_frame_to_cam_pixels(elbow_positions, intrinsics)[:, :2]
+        px_val_forearm  = cam_frame_to_cam_pixels(forearm_positions, intrinsics)[:, :2]
+        px_val_wrist    = cam_frame_to_cam_pixels(wrist_positions, intrinsics)[:, :2]
+        px_val_hand     = cam_frame_to_cam_pixels(hand_positions, intrinsics)[:, :2]
+        px_val_gripper  = cam_frame_to_cam_pixels(fk_positions, intrinsics)[:, :2]
+
+        # 4. Pack into Dictionary
+        suffix = f"_{arm}" 
+        px_dict = {
+            f"px_val_base{suffix}":     px_val_base,
+            f"px_val_shoulder{suffix}": px_val_shoulder, # Link_01
+            f"px_val_elbow{suffix}":    px_val_elbow,    # Link_03
+            f"px_val_forearm{suffix}":  px_val_forearm,  # Link_04
+            f"px_val_wrist{suffix}":    px_val_wrist,    # Link_05
+            f"px_val_hand{suffix}":     px_val_hand,     # Link_06
+            f"px_val_gripper{suffix}":  px_val_gripper,  # Custom EE
+        }
+        
         return px_dict
+
+    def get_robot_mask_line_batched(self, images, px_dict, arm="right"):
+        line_images = np.zeros_like(images)
+        mask_images = np.zeros_like(images)
+
+        # Map dictionary keys to variables for cleaner access
+        if arm == "both":
+             # (Implement both logic if needed using similar keys)
+             pass
+        elif arm == "left" or arm == "right":
+            suffix = f"_{arm}"
+            # Order: Base -> Shoulder -> Elbow -> Forearm -> Wrist -> Hand -> Gripper
+            pt1 = px_dict[f"px_val_base{suffix}"]
+            pt2 = px_dict[f"px_val_shoulder{suffix}"]
+            pt3 = px_dict[f"px_val_elbow{suffix}"]
+            pt4 = px_dict[f"px_val_forearm{suffix}"]
+            pt5 = px_dict[f"px_val_wrist{suffix}"]
+            pt6 = px_dict[f"px_val_hand{suffix}"]
+            pt7 = px_dict[f"px_val_gripper{suffix}"]
+
+        for i, image in enumerate(images):
+            masked_img = image.copy()
+
+            # Extract points for current batch index
+            # Order: Base -> Shoulder -> Elbow -> Forearm -> Wrist -> Hand -> Gripper
+            p_base     = pt1[[i]]
+            p_shoulder = pt2[[i]]
+            p_elbow    = pt3[[i]]
+            p_forearm  = pt4[[i]]
+            p_wrist    = pt5[[i]]
+            p_hand     = pt6[[i]]
+            p_gripper  = pt7[[i]]
+            
+            # Stack them in physical order
+            keypoints = np.vstack([p_base, p_shoulder, p_elbow, p_forearm, p_wrist, p_hand, p_gripper])
+            
+            input_point = np.array([])
+            input_label = np.array([])
+
+            # Interpolate if points are valid (not NaN)
+            if not np.isnan(keypoints).any():
+                # interpolation adds intermediate points for SAM to track thin links better
+                density = 4  # Number of points between each keypoint
+                input_point, input_label = interpolate_dense_path(keypoints, density=density)
+
+                # Filter points that are out of image bounds
+                input_point, input_label = get_valid_points(input_point, image.shape)
+
+            if input_point.size > 0:
+                # Add negative prompts (background) to help SAM differentiate
+                neg_points, neg_labels = get_negative_prompts(
+                    input_point, 
+                    images[i].shape, 
+                    num_points=0,   # Add 8 random background points
+                    box_offset=60 
+                )
+
+                final_points = np.concatenate([input_point, neg_points], axis=0)
+                final_labels = np.concatenate([input_label, neg_labels], axis=0)
+                
+                # Generate Mask
+                masked_img, masks, scores, logits = self.get_mask(masked_img, final_points, final_labels)
+
+            # Visualization: Draw simple skeleton line
+            line_img = masked_img.copy()
+            # Draw line from Base -> Shoulder -> Elbow -> Gripper (Simplified skeleton for visual)
+            skeleton_points = [p_base, p_shoulder, p_elbow, p_forearm, p_wrist, p_gripper]
+            for j in range(len(skeleton_points) - 1):
+                p_start = (int(skeleton_points[j][0, 0]), int(skeleton_points[j][0, 1]))
+                p_end   = (int(skeleton_points[j+1][0, 0]), int(skeleton_points[j+1][0, 1]))
+                cv2.line(line_img, p_start, p_end, color=(255, 0, 0), thickness=15)
+
+            mask_images[i] = masked_img
+            line_images[i] = line_img
+
+        return mask_images, line_images

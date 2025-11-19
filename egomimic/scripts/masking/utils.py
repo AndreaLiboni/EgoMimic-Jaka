@@ -10,7 +10,7 @@ import egomimic
 import os
 from sam2.build_sam import build_sam2_video_predictor, build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
-from egomimic.utils.egomimicUtils import AlohaFK, ee_pose_to_cam_pixels, ARIA_INTRINSICS, EXTRINSICS, ee_pose_to_cam_frame, cam_frame_to_cam_pixels, draw_dot_on_frame
+from egomimic.utils.egomimicUtils import AlohaFK, JakaFK, ee_pose_to_cam_pixels, ARIA_INTRINSICS, EXTRINSICS, ee_pose_to_cam_frame, cam_frame_to_cam_pixels, draw_dot_on_frame
 import cv2
 
 def get_bounds(binary_image):
@@ -345,9 +345,9 @@ class SAM:
             pt2_right = px_dict["px_val_gripper_right"]
             pt3_right = px_dict["px_val_arm_right"] #(pt1_right + pt2_right)/2
         elif arm == "left":
-            pt1_left = px_dict["px_val_wrist_left"]
-            pt2_left = px_dict["px_val_gripper_left"]
-            pt3_left =  px_dict["px_val_arm_left"] #(pt1_left + pt2_left)/2
+            pt1_left = px_dict["px_val_wrist_left"]   # link_6
+            pt2_left = px_dict["px_val_gripper_left"] # gripper
+            pt3_left = px_dict["px_val_arm_left"]     # link_2                (pt1_left + pt2_left)/2
         elif arm == "right":
             pt1_right = px_dict["px_val_wrist_right"]
             pt2_right = px_dict["px_val_gripper_right"]
@@ -438,4 +438,51 @@ class SAM:
             # cv2.imwrite(f"/nethome/dpatel756/flash/egoPlay_unified/EgoPlay/mimicplay/scripts/masking/overlays/masked_img_{i}.png", cv2.cvtColor(line_img, cv2.COLOR_BGR2RGB))
 
 
-        return mask_images, line_images         
+        return mask_images, line_images
+
+class SAMJaka(SAM):
+    def __init__(self):
+        super().__init__()
+        self.fk = JakaFK()
+    
+    def project_single_joint_position_to_image(self, qpos, extrinsics, intrinsics, arm="right"):
+        joint_pos = self.fk.chain.forward_kinematics(qpos, end_only=False)
+
+        fk_positions = joint_pos['custom_ee_link'].get_matrix()[:, :3, 3] # used
+        wrist_positions = joint_pos['Link_06'].get_matrix()[:, :3, 3]
+        elbow_positions = joint_pos['Link_03'].get_matrix()[:, :3, 3] # used
+        arm_positions = joint_pos['Link_02'].get_matrix()[:, :3, 3] # used
+        lower_forearm_positions = joint_pos['Link_04'].get_matrix()[:, :3, 3]
+
+
+        fk_positions = ee_pose_to_cam_frame(fk_positions, extrinsics)[:, :3]
+        wrist_positions = ee_pose_to_cam_frame(wrist_positions, extrinsics)[:, :3]
+        elbow_positions = ee_pose_to_cam_frame(elbow_positions, extrinsics)[:, :3]
+        arm_positions = ee_pose_to_cam_frame(arm_positions, extrinsics)[:, :3]
+        lower_forearm_positions = ee_pose_to_cam_frame(lower_forearm_positions, extrinsics)[:, :3]
+
+        px_val_gripper = cam_frame_to_cam_pixels(fk_positions, intrinsics)[:, :2]
+        px_val_wrist = cam_frame_to_cam_pixels(wrist_positions, intrinsics)[:, :2]
+        px_val_elbow = cam_frame_to_cam_pixels(elbow_positions, intrinsics)[:, :2]
+        px_val_arm = cam_frame_to_cam_pixels(arm_positions, intrinsics)[:, :2]
+        px_val_lower_forearm = cam_frame_to_cam_pixels(lower_forearm_positions, intrinsics)[:, :2]
+
+        if arm == "right":
+            px_dict = {
+                "px_val_gripper_right": px_val_gripper,
+                "px_val_wrist_right": px_val_wrist,
+                "px_val_elbow_right": px_val_elbow,
+                "px_val_arm_right": px_val_arm,
+                "px_val_lower_forearm_right": px_val_lower_forearm,
+            }
+        elif arm == "left":
+            px_dict = {
+                "px_val_gripper_left": px_val_gripper,
+                "px_val_wrist_left": px_val_wrist,
+                "px_val_elbow_left": px_val_elbow,
+                "px_val_arm_left": px_val_arm,
+                "px_val_lower_forearm_left": px_val_lower_forearm,
+            }
+        else:
+            raise ValueError("Arm must be either 'right' or 'left'")
+        return px_dict

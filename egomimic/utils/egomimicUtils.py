@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
 import torch
 from scipy.spatial.transform import Rotation
-# import pytorch_kinematics as pk
+import pytorch_kinematics as pk
 import egomimic
 import os
 import torchvision.transforms.v2.functional as TVTF
@@ -63,10 +63,14 @@ EXTRINSICS = {
     "ariaJul29R": np.array([[ 0.07280155, -0.81760187,  0.57116295,  0.12038065],
        [ 0.9973441 ,  0.05843903, -0.04346979, -0.31690207],
        [ 0.00216277,  0.57281067,  0.81968485, -0.03742754],
+       [ 0.        ,  0.        ,  0.        ,  1.        ]]),
+    "aria_jaka":{
+        'left': np.array([[-0.99884331, -0.00142335, -0.0480626 , -0.18752439],
+       [ 0.03408151,  0.68414723, -0.7285472 ,  0.14127119],
+       [ 0.03391888, -0.72934254, -0.68330737,  1.02207715],
        [ 0.        ,  0.        ,  0.        ,  1.        ]])
-
+    }
 }
-
 
 def is_key(x):
     return hasattr(x, "keys") and callable(x.keys)
@@ -268,6 +272,22 @@ class AlohaFK:
         )
         self.chain = pk.build_serial_chain_from_urdf(
             open(urdf_path).read(), "vx300s/ee_gripper_link"
+        )
+
+    def fk(self, qpos):
+        if isinstance(qpos, np.ndarray):
+            qpos = torch.from_numpy(qpos)
+
+        return self.chain.forward_kinematics(qpos, end_only=True).get_matrix()[:, :3, 3]
+    
+
+class JakaFK:
+    def __init__(self):
+        urdf_path = os.path.join(
+            os.path.dirname(egomimic.__file__), "resources/jaka_s12_pinza_nera.urdf"
+        )
+        self.chain = pk.build_serial_chain_from_urdf(
+            open(urdf_path).read(), "custom_ee_link"
         )
 
     def fk(self, qpos):

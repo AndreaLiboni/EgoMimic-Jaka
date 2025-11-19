@@ -132,7 +132,7 @@
                 "low_dim": [
                     "joint_positions"
                 ],
-                "rgb": ["front_img_1_line", "wrist_img"],
+                "rgb": ["front_img_1_line", "left_wrist_img"],
                 "depth": [],
                 "scan": []
             },

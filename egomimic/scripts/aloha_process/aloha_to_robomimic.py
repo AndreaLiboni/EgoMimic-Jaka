@@ -2,12 +2,14 @@ import h5py
 import numpy as np
 import argparse
 import os
+import time
 from tqdm import tqdm
 from egomimic.utils.egomimicUtils import (
     nds,
     ee_pose_to_cam_frame,
     EXTRINSICS,
-    AlohaFK
+    ARIA_INTRINSICS,
+    JakaFK
 )
 import pytorch_kinematics as pk
 import torch
@@ -16,7 +18,6 @@ import torch
 from robomimic.scripts.split_train_val import split_train_val_from_hdf5
 import json
 
-from external.robomimic.robomimic.utils.dataset import interpolate_arr
 from egomimic.scripts.masking.utils import *
 
 """
@@ -79,15 +80,17 @@ def apply_masking(hdf5_file, arm, extrinsics):
     print(".........Starting Masking........")
     if torch.cuda.get_device_properties(0).major >= 8:
         # turn on tfloat32 for Ampere GPUs (https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices)
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        # torch.backends.cuda.matmul.allow_tf32 = True
+        # torch.backends.cudnn.allow_tf32 = True
+        pass
 
     sam = SAM()
 
-    with h5py.File(hdf5_file, 'r+') as aloha_hdf5, torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16):
+    with h5py.File(hdf5_file, 'r+') as aloha_hdf5, torch.inference_mode(), torch.autocast("cuda"):
         keys_list = list(aloha_hdf5['data'].keys())
         keys_list = [k.split('_')[1] for k in keys_list]
         for j in tqdm(keys_list):
+            torch.cuda.empty_cache()
             print(f"Processing episode {j}")
             
             px_dict = sam.project_joint_positions_to_image(torch.from_numpy(aloha_hdf5[f'data/demo_{j}/obs/joint_positions'][:, :]), extrinsics, ARIA_INTRINSICS, arm=arm)
@@ -98,11 +101,27 @@ def apply_masking(hdf5_file, arm, extrinsics):
             if "front_img_1_line" in aloha_hdf5[f'data/demo_{j}/obs']:
                 del aloha_hdf5[f'data/demo_{j}/obs/front_img_1_line']
             
-            if "front_img_1_masked" in aloha_hdf5[f'data/demo_{j}/obs']:
-                del aloha_hdf5[f'data/demo_{j}/obs/front_img_1_masked']
+            # if "front_img_1_masked" in aloha_hdf5[f'data/demo_{j}/obs']:
+            #     del aloha_hdf5[f'data/demo_{j}/obs/front_img_1_masked']
 
-            aloha_hdf5[f'data/demo_{j}/obs'].create_dataset('front_img_1_line', data=line_images, chunks=(1, 480, 640, 3))
-            aloha_hdf5[f'data/demo_{j}/obs'].create_dataset('front_img_1_masked', data=mask_images, chunks=(1, 480, 640, 3))
+            aloha_hdf5[f'data/demo_{j}/obs'].create_dataset('front_img_1_line', data=line_images, chunks=(1, 480, 640, 3), compression="gzip")
+            # aloha_hdf5[f'data/demo_{j}/obs'].create_dataset('front_img_1_masked', data=mask_images, chunks=(1, 480, 640, 3), compression="gzip")
+
+
+def add_masking_obs(demo_i_obs_group, arm):
+    print(".........Starting Masking........")
+    sam = SAMJaka()
+
+    px_dict = sam.project_joint_positions_to_image(torch.from_numpy(demo_i_obs_group['joint_positions'][:, :]), EXTRINSICS[args.extrinsics], ARIA_INTRINSICS, arm=arm)
+    # print(px_dict)
+
+    mask_images, line_images = sam.get_robot_mask_line_batched(
+        demo_i_obs_group['front_img_1'], px_dict, arm=arm)
+
+    if "front_img_1_line" in demo_i_obs_group:
+        del demo_i_obs_group["front_img_1_line"]
+    
+    demo_i_obs_group.create_dataset('front_img_1_line', data=line_images, chunks=(1, 480, 640, 3), compression="gzip")
 
 
 def add_image_obs(demo_hdf5, demo_obs_group, cam_name):
@@ -118,13 +137,16 @@ def add_image_obs(demo_hdf5, demo_obs_group, cam_name):
             data=demo_hdf5["observations"]["images"]["cam_high"],
             dtype="uint8",
             chunks=(1, 480, 640, 3),
+            compression="gzip",
         )
     elif cam_name == "cam_left_wrist":
+        return
         demo_obs_group.create_dataset(
             "left_wrist_img",
             data=demo_hdf5["observations"]["images"]["cam_left_wrist"],
             dtype="uint8",
             chunks=(1, 480, 640, 3),
+            compression="gzip",
         )
     elif cam_name == "cam_right_wrist":
         demo_obs_group.create_dataset(
@@ -132,6 +154,7 @@ def add_image_obs(demo_hdf5, demo_obs_group, cam_name):
             data=demo_hdf5["observations"]["images"]["cam_right_wrist"],
             dtype="uint8",
             chunks=(1, 480, 640, 3),
+            compression="gzip",
         )    
 
 def add_joint_actions(demo_hdf5, demo_i_group, joint_start, joint_end, prestack=False, POINT_GAP=2, FUTURE_POINTS_COUNT=100):
@@ -151,10 +174,10 @@ def add_joint_actions(demo_hdf5, demo_i_group, joint_start, joint_end, prestack=
         joint_actions = get_future_points(joint_actions, POINT_GAP=POINT_GAP, FUTURE_POINTS_COUNT=FUTURE_POINTS_COUNT)
         joint_actions_sampled =  sample_interval_points(joint_actions, POINT_GAP=POINT_GAP, FUTURE_POINTS_COUNT=FUTURE_POINTS_COUNT)
     demo_i_group.create_dataset(
-        "actions_joints", data=joint_actions_sampled
+        "actions_joints", data=joint_actions_sampled, compression="gzip",
     )
     demo_i_group.create_dataset(
-        "actions_joints_act", data=joint_actions
+        "actions_joints_act", data=joint_actions, compression="gzip",
     )
     
 
@@ -171,7 +194,7 @@ def add_xyz_actions(demo_hdf5, demo_i_group, arm, left_extrinsics=None, right_ex
 
     Add xyz actions to the demo hdf5 file.
     """
-    aloha_fk = AlohaFK()
+    aloha_fk = JakaFK()
 
     if arm == "both":
         joint_start = 0
@@ -192,6 +215,8 @@ def add_xyz_actions(demo_hdf5, demo_i_group, arm, left_extrinsics=None, right_ex
         elif arm == "right":
             joint_start = 7
             joint_end = 14
+        joint_start = 0
+        joint_end = 7
         fk_positions = aloha_fk.fk(demo_hdf5["action"][:, joint_start:joint_end - 1])
     
     if arm == "both":
@@ -214,8 +239,8 @@ def add_xyz_actions(demo_hdf5, demo_i_group, arm, left_extrinsics=None, right_ex
         print("AFTER prestacking", fk_positions.shape)
         fk_positions_sampled = sample_interval_points(fk_positions, POINT_GAP=POINT_GAP, FUTURE_POINTS_COUNT=FUTURE_POINTS_COUNT)
 
-    demo_i_group.create_dataset("actions_xyz_act", data=fk_positions)
-    demo_i_group.create_dataset("actions_xyz", data=fk_positions_sampled)
+    demo_i_group.create_dataset("actions_xyz_act", data=fk_positions, compression="gzip",)
+    demo_i_group.create_dataset("actions_xyz", data=fk_positions_sampled, compression="gzip",)
 
 def add_ee_pose_obs(demo_hdf5, demo_i_obs_group, arm, left_extrinsics=None, right_extrinsics=None): 
     """
@@ -227,7 +252,7 @@ def add_ee_pose_obs(demo_hdf5, demo_i_obs_group, arm, left_extrinsics=None, righ
 
     Add ee pose obs to the demo hdf5 file.
     """
-    aloha_fk = AlohaFK()
+    aloha_fk = JakaFK()
 
     if arm == "both":
         joint_start = 0
@@ -245,7 +270,9 @@ def add_ee_pose_obs(demo_hdf5, demo_i_obs_group, arm, left_extrinsics=None, righ
             joint_end = 7
         elif arm == "right":
             joint_start = 7
-            joint_end = 14    
+            joint_end = 14
+        joint_start = 0
+        joint_end = 7    
         fk_positions = aloha_fk.fk(demo_hdf5["observations"]["qpos"][:, joint_start:joint_end - 1])
     
     if arm == "both":
@@ -262,9 +289,9 @@ def add_ee_pose_obs(demo_hdf5, demo_i_obs_group, arm, left_extrinsics=None, righ
             fk_positions, extrinsics
         )[:, :3]
 
-    demo_i_obs_group.create_dataset("ee_pose", data=fk_positions)
+    demo_i_obs_group.create_dataset("ee_pose", data=fk_positions, compression="gzip",)
 
-def process_demo(demo_path, data_group, arm, extrinsics, prestack=False):
+def process_demo(demo_path, data_group, arm, extrinsics, prestack=False, mask=False):
     """
     demo_path: path to the demo hdf5 file
     data_group: the group in the output hdf5 file to write the data to
@@ -309,6 +336,9 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False):
             joint_left_end = 7
             joint_right_start = 7
             joint_right_end = 14
+        
+        joint_start = 0
+        joint_end = 7
 
         # obs
         ## adding images
@@ -316,11 +346,11 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False):
         if arm in ["left", "both"]:
             add_image_obs(demo_hdf5, demo_i_obs_group, "cam_left_wrist")
         if arm in ["right", "both"]:
-            add_image_obs(demo_hdf5, demo_i_obs_group, "cam_right_wrist")
+            add_image_obs(demo_hdf5, demo_i_obs_group, "cam_left_wrist")
         
         ## add joint obs
         demo_i_obs_group.create_dataset(
-            "joint_positions", data=demo_hdf5["observations"]["qpos"][:, joint_start:joint_end]
+            "joint_positions", data=demo_hdf5["observations"]["qpos"][:, joint_start:joint_end], compression="gzip"
         )
 
         # add ee_pose
@@ -335,15 +365,17 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False):
         # actions_xyz
         add_xyz_actions(demo_hdf5, demo_i_group, arm, left_extrinsics, right_extrinsics, prestack=prestack, POINT_GAP=POINT_GAP, FUTURE_POINTS_COUNT=FUTURE_POINTS_COUNT)
    
+        if mask:
+            add_masking_obs(demo_i_obs_group, arm)
+        
 def  main(args):
     # before converting everything, check it all at least opens
     for file in tqdm(os.listdir(args.dataset)):
         #  if os.path.isfile(os.path.join(args.dataset, file)):
         #     print(file.split("_")[1].split(".")[0])
         #     if int(file.split("_")[1].split(".")[0]) <= 5:
-        print("Trying to open " + file)
+        # print("Trying to open " + file)
         to_open = os.path.join(args.dataset, file)
-        print(to_open)
         if is_valid_path(to_open):
             with h5py.File(to_open, "r") as f:
                 pass
@@ -358,15 +390,9 @@ def  main(args):
 
             aloha_demo_path = os.path.join(args.dataset, aloha_demo)
 
-            process_demo(aloha_demo_path, data_group, args.arm, EXTRINSICS[args.extrinsics], args.prestack)
+            process_demo(aloha_demo_path, data_group, args.arm, EXTRINSICS[args.extrinsics], args.prestack, args.mask)
 
     split_train_val_from_hdf5(hdf5_path=args.out, val_ratio=0.2, filter_key=None)
-
-    ## Masking
-    if args.mask:
-        print("Starting Masking")
-        apply_masking(args.out, args.arm, EXTRINSICS[args.extrinsics])
-    print("Successful Conversion!")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

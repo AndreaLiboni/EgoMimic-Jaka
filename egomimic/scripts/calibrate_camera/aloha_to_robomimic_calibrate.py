@@ -99,9 +99,9 @@ if __name__ == "__main__":
 
     chain = pk.build_serial_chain_from_urdf(
         open(
-            "/home/rl2-bonjour/EgoPlay/EgoPlay/egomimic/resources/model.urdf"
+            "/run/media/Dati/Sviluppo/Università/Tesi/EgoMimic/egomimic/resources/jaka_s12_pinza_nera.urdf"
         ).read(),
-        "vx300s/ee_gripper_link",
+        "custom_ee_link",
     )
 
     # before converting everything, check it all at least opens

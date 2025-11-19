@@ -17,7 +17,7 @@ from egomimic.utils.egomimicUtils import (
 
 from scipy.spatial.transform import Rotation as Rot
 import matplotlib.pyplot as plt
-from rpl_vision_utils.utils.apriltag_detector import AprilTagDetector
+from deoxys_vision.utils.markers.apriltag_detector import AprilTagDetector
 
 
 def parse_args():
@@ -55,7 +55,7 @@ def main():
 
     calib = h5py.File(args.h5py_path, "r+")
 
-    april_detector = AprilTagDetector(quad_decimate=1.0)
+    april_detector = AprilTagDetector(families="tag25h9")
 
     # TODO get intrinsics
     # with open(os.path.join(args.config_folder, f"camera_{args.camera_id}_{args.camera_type}.json"), "r") as f:
@@ -93,7 +93,8 @@ def main():
                 img,
                 intrinsics=intrinsics["color"],
                 # tag_size=0.0958)
-                tag_size=0.17541875,
+                # tag_size=0.039,
+                tag_size=0.135
             )
 
             if len(detect_result) != 1:

@@ -25,3 +25,6 @@ debug_ims/*
 egomimic/scripts/aloha_process/datasetFig
 venv
 aria_vrs
+egomimic/resources/build
+egomimic/resources/install
+egomimic/resources/log

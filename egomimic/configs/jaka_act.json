@@ -70,8 +70,8 @@
         ],
         "goal_mode": null,
         "cuda": true,
-        "batch_size": 5,
-        "num_epochs": 3,
+        "batch_size": 7,
+        "num_epochs": 10,
         "seed": 1,
         "imagenet_normalize_images": true
     },
@@ -83,7 +83,7 @@
                     "initial": 5e-5,
                     "decay_factor": 1,
                     "epoch_schedule": [
-                        100
+                        1
                     ],
                     "scheduler_type": "linear"
                 },
@@ -132,7 +132,7 @@
                 "low_dim": [
                     "joint_positions"
                 ],
-                "rgb": ["front_img_1_line", "left_wrist_img"],
+                "rgb": ["front_img_1_line"],
                 "depth": [],
                 "scan": []
             },

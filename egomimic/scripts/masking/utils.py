@@ -13,6 +13,9 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 from egomimic.utils.egomimicUtils import AlohaFK, JakaFK, ee_pose_to_cam_pixels, ARIA_INTRINSICS, EXTRINSICS, ee_pose_to_cam_frame, cam_frame_to_cam_pixels, draw_dot_on_frame
 import cv2
 import random
+from PIL import Image
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
 
 def get_bounds(binary_image):
     # gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -201,9 +204,9 @@ def interpolate_dense_path(points, density=5):
 class SAM:
     def __init__(self):
         sam2_checkpoint = os.path.join(
-            os.path.dirname(egomimic.__file__), "resources/sam2.1_hiera_tiny.pt"
+            os.path.dirname(egomimic.__file__), "resources/sam2.1_hiera_small.pt"
         )
-        model_cfg = "configs/sam2.1/sam2.1_hiera_t.yaml"
+        model_cfg = "configs/sam2.1/sam2.1_hiera_s.yaml"
 
         sam2_model = build_sam2(model_cfg, sam2_checkpoint, device="cuda")
 
@@ -335,16 +338,16 @@ class SAM:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.predictor.set_image(image)
 
-        img_point = image.copy()
-        for point, lb in zip(points, label):
-            img_point = cv2.circle(
-                img_point,
-                (int(point[0]), int(point[1])),
-                radius=5,
-                color=(0, 255, 255*lb),
-            )
-        cv2.imwrite("img_point.png", img_point)
-        cv2.waitKey(1)
+        # img_point = image.copy()
+        # for point, lb in zip(points, label):
+        #     img_point = cv2.circle(
+        #         img_point,
+        #         (int(point[0]), int(point[1])),
+        #         radius=5,
+        #         color=(0, 255, 255),
+        #     )
+        # cv2.imwrite("img_point.png", img_point)
+        # cv2.waitKey(1)
 
         masks, scores, logits = self.predictor.predict(
             point_coords=points,
@@ -358,7 +361,7 @@ class SAM:
         
         masked_img = image
         masked_img[masks[0] == 1] = 0
-        cv2.imwrite("masked_img.png", image)
+        # cv2.imwrite("masked_img.png", image)
         return masked_img, masks, scores, logits
     
 
@@ -531,9 +534,23 @@ class SAM:
         return mask_images, line_images
 
 class SAMJaka(SAM):
-    def __init__(self):
-        super().__init__()
+
+    def __init__(self, use_sam3=False):
+
+        if not use_sam3:
+            super().__init__()
+        else:
+            # Load the model
+            sam3_root ='external/sam3'
+            bpe_path = f"{sam3_root}/assets/bpe_simple_vocab_16e6.txt.gz"
+            model = build_sam3_image_model(bpe_path=bpe_path)
+            self.predictor = Sam3Processor(model)
+
+            self.get_mask = self.get_mask_sam3
+
         self.fk = JakaFK()
+
+        print("Initialized SAMJaka Model")
     
     def project_single_joint_position_to_image(self, qpos, extrinsics, intrinsics, arm="right"):
         # Forward Kinematics to get all link transforms
@@ -645,7 +662,7 @@ class SAMJaka(SAM):
                 neg_points, neg_labels = get_negative_prompts(
                     input_point, 
                     images[i].shape, 
-                    num_points=0,   # Add 8 random background points
+                    num_points=8,   # Add 8 random background points
                     box_offset=60 
                 )
 
@@ -658,7 +675,7 @@ class SAMJaka(SAM):
             # Visualization: Draw simple skeleton line
             line_img = masked_img.copy()
             # Draw line from Base -> Shoulder -> Elbow -> Gripper (Simplified skeleton for visual)
-            skeleton_points = [p_base, p_shoulder, p_elbow, p_forearm, p_wrist, p_gripper]
+            skeleton_points = [p_elbow, p_wrist]
             for j in range(len(skeleton_points) - 1):
                 p_start = (int(skeleton_points[j][0, 0]), int(skeleton_points[j][0, 1]))
                 p_end   = (int(skeleton_points[j+1][0, 0]), int(skeleton_points[j+1][0, 1]))
@@ -668,3 +685,45 @@ class SAMJaka(SAM):
             line_images[i] = line_img
 
         return mask_images, line_images
+    
+
+    def get_mask_sam3(self, image, points, label):
+
+        # 1. Prepare Image
+        # Ensure image is RGB for the model
+        image_rgb = cv2.cvtColor(image.copy(), cv2.COLOR_BGR2RGB)
+        image_rgb = Image.fromarray(image_rgb, mode="RGB")
+        inference_state = self.predictor.set_image(image_rgb)
+
+        # 3. Run Inference with Text Prompt
+        output = self.predictor.set_text_prompt(
+            state=inference_state, 
+            prompt="A red and silver articulated robotic arm in the foreground"
+        )
+        
+        # masks shape is typically (N, H, W) or (N, 1, H, W)
+        masks, boxes, scores = output["masks"], output["boxes"], output["scores"]
+        
+        # 4. Process the Mask
+        if len(masks) == 0:
+            return image, masks, scores, boxes
+
+        # We take the mask with the highest score (index 0 usually)
+        best_mask_tensor = masks[0]
+        
+        # Convert Tensor to Numpy
+        if isinstance(best_mask_tensor, torch.Tensor):
+            best_mask = best_mask_tensor.cpu().numpy()
+        else:
+            best_mask = best_mask_tensor
+            
+        # Remove extra dimensions (e.g. 1x640x480 -> 640x480)
+        best_mask = best_mask.squeeze()
+
+        # Apply Mask to Image
+        masked_img = image.copy()
+        masked_img[best_mask] = 0  # Set background to black
+
+        cv2.imwrite("masked_img.png", masked_img)
+
+        return masked_img, masks, scores, boxes

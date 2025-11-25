@@ -63,14 +63,14 @@ def single_file_conversion(dataset, mps_sample_path, filename, hand):
 
     # Hand tracking
     wrist_and_palm_poses_path = os.path.join(
-        mps_sample_path, "hand_tracking", "wrist_and_palm_poses.csv"
+        mps_sample_path, "hand_tracking", "hand_tracking_results.csv"
     )
 
     # Create data provider and get T_device_rgb
     provider = data_provider.create_vrs_data_provider(vrsfile)
 
     ## Load hand tracking
-    wrist_and_palm_poses = mps.hand_tracking.read_wrist_and_palm_poses(
+    wrist_and_palm_poses = mps.hand_tracking.read_hand_tracking_results(
         wrist_and_palm_poses_path
     )
 
@@ -138,36 +138,68 @@ def single_file_conversion(dataset, mps_sample_path, filename, hand):
                 raw_image=sample_frames["rgb"].to_numpy_array(),
             )
             ## obs ee_pose
-            wrist_and_palm_pose_t = mps_data_provider.get_wrist_and_palm_pose(
+            # if not mps_data_provider.has_wrist_and_palm_poses():
+            #     print("skip " + str(t))
+            #     continue
+            wrist_and_palm_pose_t = mps_data_provider.get_hand_tracking_result(
                 sample_timestamp_ns_t, time_query_closest
             )
 
             rotation_matrix = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
 
             if hand == "right":
-                ee_pose_obs_t_rot = (
-                    transform
-                    @ wrist_and_palm_pose_t.right_hand.palm_position_device
-                ).T
+                # .right_hand is still a property, but it returns a HandPose object
+                if wrist_and_palm_pose_t.right_hand is None:
+                    print("skip " + str(t))
+                    continue
+                
+                # UPDATE: Use .get_palm_position_device() method instead of property
+                palm_pos = wrist_and_palm_pose_t.right_hand.get_palm_position_device()
+                
+                ee_pose_obs_t_rot = (transform @ palm_pos).T
                 ee_pose_obs_t = np.dot(ee_pose_obs_t_rot, rotation_matrix.T)
                 actions_t = np.zeros((10, 3))
-            elif hand == "left":
-                ee_pose_obs_t_rot = (
-                    transform @ wrist_and_palm_pose_t.left_hand.palm_position_device
-                ).T
-                ee_pose_obs_t = np.dot(ee_pose_obs_t_rot, rotation_matrix.T)
-                actions_t = np.zeros((10, 3))
-            elif hand == "bimanual":
-                pose_l = (
-                    transform @ wrist_and_palm_pose_t.left_hand.palm_position_device
-                ).T
-                pose_r = (
-                    transform
-                    @ wrist_and_palm_pose_t.right_hand.palm_position_device
-                ).T
 
-                pose_l_rot = np.dot(pose_l, rotation_matrix.T)
-                pose_r_rot = np.dot(pose_r, rotation_matrix.T)
+            elif hand == "left":
+                if wrist_and_palm_pose_t.left_hand is None:
+                    print("skip " + str(t))
+                    continue
+                    
+                # UPDATE: Use .get_palm_position_device()
+                palm_pos = wrist_and_palm_pose_t.left_hand.get_palm_position_device()
+
+                ee_pose_obs_t_rot = (transform @ palm_pos).T
+                ee_pose_obs_t = np.dot(ee_pose_obs_t_rot, rotation_matrix.T)
+                actions_t = np.zeros((10, 3))
+
+            elif hand == "bimanual":
+                if (wrist_and_palm_pose_t.left_hand is None) and (
+                    wrist_and_palm_pose_t.right_hand is None
+                ):
+                    print("skip " + str(t))
+                    continue
+                
+                # Handle potentially missing hands for bimanual (if logic allows partial)
+                # or assume both exist if your skip logic above is sufficient. 
+                # (Original code only skipped if BOTH were None)
+
+                if wrist_and_palm_pose_t.left_hand is not None:
+                    pose_l = (
+                        transform @ wrist_and_palm_pose_t.left_hand.get_palm_position_device()
+                    ).T
+                    pose_l_rot = np.dot(pose_l, rotation_matrix.T)
+                else:
+                    # Fallback if left is missing but right exists
+                    pose_l_rot = np.zeros(3) 
+
+                if wrist_and_palm_pose_t.right_hand is not None:
+                    pose_r = (
+                        transform @ wrist_and_palm_pose_t.right_hand.get_palm_position_device()
+                    ).T
+                    pose_r_rot = np.dot(pose_r, rotation_matrix.T)
+                else:
+                    # Fallback if right is missing but left exists
+                    pose_r_rot = np.zeros(3)
 
                 ee_pose_obs_t = np.concatenate(
                     (pose_l_rot, pose_r_rot), axis=None
@@ -188,16 +220,23 @@ def single_file_conversion(dataset, mps_sample_path, filename, hand):
                 sample_timestamp_ns = stream_timestamps_ns["rgb"][
                     int(t + offset * STEP)
                 ]
-                wrist_and_palm_pose = mps_data_provider.get_wrist_and_palm_pose(
+                wrist_and_palm_pose = mps_data_provider.get_hand_tracking_result(
                     sample_timestamp_ns, time_query_closest
                 )
-                ## LR pose at time t + offset in camera t + offset frame
-                right_palm = (
-                    transform @ wrist_and_palm_pose.right_hand.palm_position_device
-                ).T
-                left_palm = (
-                    transform @ wrist_and_palm_pose.left_hand.palm_position_device
-                ).T
+                # Process Right Hand
+                if wrist_and_palm_pose.right_hand is not None:
+                    r_pos = wrist_and_palm_pose.right_hand.get_palm_position_device()
+                    right_palm = (transform @ r_pos).T
+                else:
+                    # Fallback to zeros if hand is not detected, so the 'if np.any' check later simply fails
+                    right_palm = np.zeros(3) 
+
+                # Process Left Hand
+                if wrist_and_palm_pose.left_hand is not None:
+                    l_pos = wrist_and_palm_pose.left_hand.get_palm_position_device()
+                    left_palm = (transform @ l_pos).T
+                else:
+                    left_palm = np.zeros(3)
 
                 pose_offset = mps_data_provider.get_closed_loop_pose(
                     sample_timestamp_ns, time_query_closest

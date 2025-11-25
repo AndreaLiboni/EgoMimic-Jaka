@@ -28,3 +28,5 @@ aria_vrs
 egomimic/resources/build
 egomimic/resources/install
 egomimic/resources/log
+!requirements.txt
+external/robomimic/requirements.txt

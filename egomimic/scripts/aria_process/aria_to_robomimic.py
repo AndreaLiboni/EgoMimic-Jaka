@@ -467,7 +467,7 @@ def line_on_hand(images, masks, arm):
     return overlayed_imgs
 
 
-def sam_processing(dataset, debug=False):
+def sam_processing(dataset, arm, debug=False):
     """
     Applying masking to all images in the dataset
 
@@ -487,7 +487,7 @@ def sam_processing(dataset, debug=False):
                 imgs = demo["obs/front_img_1"]
                 ee_poses = demo["obs/ee_pose"]
 
-                overlayed_imgs, masked_imgs, raw_masks = sam.get_hand_mask_line_batched(imgs, ee_poses, ARIA_INTRINSICS, debug=debug)
+                overlayed_imgs, masked_imgs, raw_masks = sam.get_hand_mask_line_batched(imgs, ee_poses, ARIA_INTRINSICS, arm, debug=debug)
                 
                 if "front_img_1_masked" in demo["obs"]:
                     print("Deleting existing masked images")
@@ -562,7 +562,7 @@ def main(args):
     ## Apply masking
     if args.mask:
         print("Starting Masking")
-        sam_processing(args.out, args.debug)
+        sam_processing(args.out, args.hand, args.debug)
 
 
 

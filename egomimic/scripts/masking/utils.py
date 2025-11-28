@@ -224,9 +224,9 @@ class SAM:
         mask_images, line_images =  self.get_robot_mask_line_batched(images, px_dict, arm=arm)
         return mask_images, line_images
     
-    def get_hand_mask_line_batched(self, imgs, ee_poses, intrinsics, debug=False):
+    def get_hand_mask_line_batched(self, imgs, ee_poses, intrinsics, arm, debug=False):
         ## both hands
-        if ee_poses.shape[-1] == 6:
+        if ee_poses.shape[-1] == 6 and arm == "both":
             prompts_l = cam_frame_to_cam_pixels(ee_poses[:, :3], intrinsics)[:, :2]
             prompts_r = cam_frame_to_cam_pixels(ee_poses[:, 3:], intrinsics)[:, :2]
 
@@ -257,7 +257,7 @@ class SAM:
 
             masked_imgs, raw_masks = self.get_hand_mask_batched(imgs, prompts_r)
 
-            overlayed_imgs = line_on_hand(masked_imgs, raw_masks, "right")
+            overlayed_imgs = line_on_hand(masked_imgs, raw_masks, arm)
         else:
             raise ValueError(f"Invalid shape for ee_poses: {ee_poses.shape}")
         
@@ -266,8 +266,10 @@ class SAM:
             breakpoint()
             for j in range(overlayed_imgs.shape[0]):
                 overlayed_imgs[j] = cv2.cvtColor(overlayed_imgs[j], cv2.COLOR_BGR2RGB)
-                overlayed_imgs[j] = draw_dot_on_frame(overlayed_imgs[j], prompts_l[[j]], palette="Set1")
-                overlayed_imgs[j] = draw_dot_on_frame(overlayed_imgs[j], prompts_r[[j]], palette="Set2")
+                if prompts_l is not None:
+                    overlayed_imgs[j] = draw_dot_on_frame(overlayed_imgs[j], prompts_l[[j]], palette="Set1")
+                if prompts_r is not None:
+                    overlayed_imgs[j] = draw_dot_on_frame(overlayed_imgs[j], prompts_r[[j]], palette="Set2")
                 cv2.imwrite(f"./overlays/overlayed_img_{j}.png", overlayed_imgs[j])
                 cv2.imwrite(f"./overlays/masked_img_{j}.png", cv2.cvtColor(masked_imgs[j], cv2.COLOR_BGR2RGB))
                 cv2.imwrite(f"./overlays/mask_{j}.png", raw_masks[j].astype(np.uint8) * 255)

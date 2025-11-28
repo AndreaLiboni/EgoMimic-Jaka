@@ -89,8 +89,8 @@ def apply_masking(hdf5_file, arm, extrinsics):
     with h5py.File(hdf5_file, 'r+') as aloha_hdf5, torch.inference_mode(), torch.autocast("cuda"):
         keys_list = list(aloha_hdf5['data'].keys())
         keys_list = [k.split('_')[1] for k in keys_list]
-        for j in tqdm(keys_list):
-            torch.cuda.empty_cache()
+        for j in keys_list:
+            # torch.cuda.empty_cache()
             print(f"Processing episode {j}")
             
             px_dict = sam.project_joint_positions_to_image(torch.from_numpy(aloha_hdf5[f'data/demo_{j}/obs/joint_positions'][:, :]), extrinsics, ARIA_INTRINSICS, arm=arm)
@@ -370,21 +370,21 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False, mask=Fa
         
 def  main(args):
     # before converting everything, check it all at least opens
-    for file in tqdm(os.listdir(args.dataset)):
-        #  if os.path.isfile(os.path.join(args.dataset, file)):
-        #     print(file.split("_")[1].split(".")[0])
-        #     if int(file.split("_")[1].split(".")[0]) <= 5:
-        # print("Trying to open " + file)
-        to_open = os.path.join(args.dataset, file)
-        if is_valid_path(to_open):
-            with h5py.File(to_open, "r") as f:
-                pass
+    # for file in os.listdir(args.dataset):
+    #     #  if os.path.isfile(os.path.join(args.dataset, file)):
+    #     #     print(file.split("_")[1].split(".")[0])
+    #     #     if int(file.split("_")[1].split(".")[0]) <= 5:
+    #     to_open = os.path.join(args.dataset, file)
+    #     if is_valid_path(to_open):
+    #         with h5py.File(to_open, "r") as f:
+    #             pass
 
     with h5py.File(args.out, "w", rdcc_nbytes=1024**2 * 2) as dataset:
         data_group = dataset.create_group("data")
         data_group.attrs["env_args"] = json.dumps({})  # if no normalize obs
 
-        for i, aloha_demo in enumerate(tqdm(os.listdir(args.dataset))):
+        for i, aloha_demo in enumerate(os.listdir(args.dataset)):
+            print("opening " + aloha_demo)
             if not is_valid_path(os.path.join(args.dataset, aloha_demo)):
                 continue
 

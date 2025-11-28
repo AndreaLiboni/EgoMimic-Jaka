@@ -287,9 +287,9 @@ class AlohaFK:
     
 
 class JakaFK:
-    def __init__(self):
+    def __init__(self, urdf_file="jaka_s12_pinza_nera.urdf"):
         urdf_path = os.path.join(
-            os.path.dirname(egomimic.__file__), "resources/jaka_s12_pinza_nera.urdf"
+            os.path.dirname(egomimic.__file__), "resources", urdf_file
         )
         self.chain = pk.build_serial_chain_from_urdf(
             open(urdf_path).read(), "custom_ee_link"

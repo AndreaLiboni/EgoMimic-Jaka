@@ -341,12 +341,12 @@ class SAM:
         self.predictor.set_image(image)
 
         # img_point = image.copy()
-        # for point, lb in zip(points, label):
+        # for i, (point, lb) in enumerate(zip(points, label)):
         #     img_point = cv2.circle(
         #         img_point,
         #         (int(point[0]), int(point[1])),
         #         radius=5,
-        #         color=(0, 255, 255),
+        #         color=(255, 255-(i*50), 0*lb),
         #     )
         # cv2.imwrite("img_point.png", img_point)
         # cv2.waitKey(1)
@@ -550,30 +550,14 @@ class SAMJaka(SAM):
 
             self.get_mask = self.get_mask_sam3
 
-        self.fk = JakaFK()
-
-        print("Initialized SAMJaka Model")
+        self.fk = JakaFK("jaka_s12_pinza_nera_real.urdf")
     
     def project_single_joint_position_to_image(self, qpos, extrinsics, intrinsics, arm="right"):
         # Forward Kinematics to get all link transforms
         joint_pos = self.fk.chain.forward_kinematics(qpos, end_only=False)
-
-        # 1. Get 3D positions
-        # Note: 'base_link' is the bottom of the robot. 
-        # 'Link_01' is the shoulder (approx 14cm up).
-        # 'Link_02' is skipped because it is at (0,0,0) relative to Link_01.
         
-        # Check if base_link is in the dict (depends on FK library), otherwise use identity or Link_01 parent
-        if 'base_link' in joint_pos:
-            base_positions = joint_pos['base_link'].get_matrix()[:, :3, 3]
-        else:
-            # Fallback: If chain doesn't return base_link, assume it is at (0,0,0) in robot frame
-            # This requires transforming (0,0,0) by the extrinsic only, 
-            # or simply using Link_01 offset downwards if simpler. 
-            # Usually FK libraries return the root link.
-            base_positions = np.zeros_like(joint_pos['Link_01'].get_matrix()[:, :3, 3])
-
-        shoulder_positions = joint_pos['Link_01'].get_matrix()[:, :3, 3]
+        base_positions     = joint_pos['Link_01'].get_matrix()[:, :3, 3]
+        shoulder_positions = joint_pos['Link_02'].get_matrix()[:, :3, 3]
         elbow_positions    = joint_pos['Link_03'].get_matrix()[:, :3, 3]
         forearm_positions  = joint_pos['Link_04'].get_matrix()[:, :3, 3]
         wrist_positions    = joint_pos['Link_05'].get_matrix()[:, :3, 3]
@@ -601,8 +585,8 @@ class SAMJaka(SAM):
         # 4. Pack into Dictionary
         suffix = f"_{arm}" 
         px_dict = {
-            f"px_val_base{suffix}":     px_val_base,
-            f"px_val_shoulder{suffix}": px_val_shoulder, # Link_01
+            f"px_val_base{suffix}":     px_val_base,     # Link_01
+            f"px_val_shoulder{suffix}": px_val_shoulder, # Link_02
             f"px_val_elbow{suffix}":    px_val_elbow,    # Link_03
             f"px_val_forearm{suffix}":  px_val_forearm,  # Link_04
             f"px_val_wrist{suffix}":    px_val_wrist,    # Link_05
@@ -616,10 +600,8 @@ class SAMJaka(SAM):
         line_images = np.zeros_like(images)
         mask_images = np.zeros_like(images)
 
-        # Map dictionary keys to variables for cleaner access
         if arm == "both":
-             # (Implement both logic if needed using similar keys)
-             pass
+            pass
         elif arm == "left" or arm == "right":
             suffix = f"_{arm}"
             # Order: Base -> Shoulder -> Elbow -> Forearm -> Wrist -> Hand -> Gripper
@@ -631,10 +613,9 @@ class SAMJaka(SAM):
             pt6 = px_dict[f"px_val_hand{suffix}"]
             pt7 = px_dict[f"px_val_gripper{suffix}"]
 
-        for i, image in enumerate(images):
+        for i, image in enumerate(tqdm(images)):
             masked_img = image.copy()
 
-            # Extract points for current batch index
             # Order: Base -> Shoulder -> Elbow -> Forearm -> Wrist -> Hand -> Gripper
             p_base     = pt1[[i]]
             p_shoulder = pt2[[i]]
@@ -645,7 +626,7 @@ class SAMJaka(SAM):
             p_gripper  = pt7[[i]]
             
             # Stack them in physical order
-            keypoints = np.vstack([p_base, p_shoulder, p_elbow, p_forearm, p_wrist, p_hand, p_gripper])
+            keypoints = np.vstack([p_base, p_shoulder, p_elbow, p_forearm, p_wrist, p_hand]) # remove p_gripper
             
             input_point = np.array([])
             input_label = np.array([])
@@ -653,7 +634,7 @@ class SAMJaka(SAM):
             # Interpolate if points are valid (not NaN)
             if not np.isnan(keypoints).any():
                 # interpolation adds intermediate points for SAM to track thin links better
-                density = 4  # Number of points between each keypoint
+                density = 0  # Number of points between each keypoint
                 input_point, input_label = interpolate_dense_path(keypoints, density=density)
 
                 # Filter points that are out of image bounds
@@ -664,7 +645,7 @@ class SAMJaka(SAM):
                 neg_points, neg_labels = get_negative_prompts(
                     input_point, 
                     images[i].shape, 
-                    num_points=8,   # Add 8 random background points
+                    num_points=0,   # Add 8 random background points
                     box_offset=60 
                 )
 

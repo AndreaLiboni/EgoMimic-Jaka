@@ -140,7 +140,6 @@ def add_image_obs(demo_hdf5, demo_obs_group, cam_name):
             compression="gzip",
         )
     elif cam_name == "cam_left_wrist":
-        return
         demo_obs_group.create_dataset(
             "left_wrist_img",
             data=demo_hdf5["observations"]["images"]["cam_left_wrist"],

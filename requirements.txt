@@ -5,4 +5,6 @@ peft
 wandb>=0.12.10
 projectaria-tools==2.1.0
 pytorch-kinematics==0.7.5
+pyrealsense2==2.56.5.9235
+projectaria-client-sdk==2.1.0
 #pupil_apriltags==1.0.4.post11

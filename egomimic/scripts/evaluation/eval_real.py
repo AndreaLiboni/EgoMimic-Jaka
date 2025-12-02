@@ -138,7 +138,7 @@ def eval_real(model, env, rollout_dir, norm_stats, arm="right"):
 
     # max_timesteps = int(max_timesteps * 1)  # may increase for real-world tasks
     qpos_t, actions_t = [], []
-    num_rollouts = 50
+    num_rollouts = 1
     for rollout_id in range(num_rollouts):
         if TEMPORAL_AGG:
             TA = TemporalAgg()

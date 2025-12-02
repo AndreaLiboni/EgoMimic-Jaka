@@ -12,7 +12,7 @@
         "save": {
             "enabled": true,
             "every_n_seconds": null,
-            "every_n_epochs": 1,
+            "every_n_epochs": 5,
             "top_n": 5,
             "epochs": [],
             "on_best_validation": true,
@@ -70,8 +70,8 @@
         ],
         "goal_mode": null,
         "cuda": true,
-        "batch_size": 7,
-        "num_epochs": 10,
+        "batch_size": 5,
+        "num_epochs": 100,
         "seed": 1,
         "imagenet_normalize_images": true
     },
@@ -83,7 +83,7 @@
                     "initial": 5e-5,
                     "decay_factor": 1,
                     "epoch_schedule": [
-                        1
+                        5
                     ],
                     "scheduler_type": "linear"
                 },
@@ -132,7 +132,7 @@
                 "low_dim": [
                     "joint_positions"
                 ],
-                "rgb": ["front_img_1_line"],
+                "rgb": ["front_img_1_line", "left_wrist_img"],
                 "depth": [],
                 "scan": []
             },

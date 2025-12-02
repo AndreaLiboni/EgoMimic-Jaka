@@ -18,20 +18,14 @@ Args:
 
     debug (bool): set this flag to run a quick training run for debugging purposes
 """
-import sys
-sys.path.append('/home/andrea/Sviluppo/Lavoro/jaka_sdk_2.2.7/')
-from jkrc import RC
-
 import argparse
 import numpy as np
 import time
 import os
-
 import torch
 import robomimic.utils.obs_utils as ObsUtils
-# from torchvision.utils import save_image
-# import cv2
-
+import matplotlib.pyplot as plt
+import pickle
 
 from egomimic.utils.egomimicUtils import (
     cam_frame_to_cam_pixels,
@@ -44,21 +38,15 @@ from egomimic.utils.egomimicUtils import (
     ee_pose_to_cam_frame,
     JakaFK,
 )
-
-
+from egomimic.scripts.evaluation.real_utils import *
 from egomimic.configs import config_factory
 from egomimic.pl_utils.pl_model import ModelWrapper
-
-from eve.constants import DT, JAKA_GRIPPER_JOINT_OPEN, START_ARM_POSE
-from eve.jaka_utils import move_gripper, move_arms  # requires aloha
-from eve.jaka_real_env import RealEnvJaka  # requires aloha
-
-from egomimic.scripts.evaluation.real_utils import *
-import matplotlib.pyplot as plt
 from egomimic.algo.act import ACT
 from egomimic.scripts.masking.utils import SAMJaka
 
-import pickle
+from eve.constants import DT, JAKA_GRIPPER_JOINT_OPEN, START_ARM_POSE
+from eve.jaka_real_env import RealEnvJaka
+from eve.jaka import JAKA
 
 
 # For debugging
@@ -66,9 +54,9 @@ import pickle
 
 
 CURR_INTRINSICS = ARIA_INTRINSICS
-CURR_EXTRINSICS = EXTRINSICS["ariaJul29R"]
+CURR_EXTRINSICS = EXTRINSICS["aria_jaka"]
 # NORM_STATS = to_torch(NORM_STATS, torch.device("cuda"))
-CAM_KEY = "front_img_1"
+CAM_KEY = "front_img_1_line"
 TEMPORAL_AGG = False
 
 
@@ -122,7 +110,7 @@ class TemporalAgg:
 
         return smoothed_action
 
-def eval_real(model, env, rollout_dir, norm_stats):
+def eval_real(model, env, rollout_dir, norm_stats, arm):
     device = torch.device("cuda")
 
     jaka_fk = JakaFK()
@@ -138,6 +126,7 @@ def eval_real(model, env, rollout_dir, norm_stats):
         if TEMPORAL_AGG:
             TA = TemporalAgg()
 
+        print("moving robot to start pose...")
         ts = env.reset()
 
         t0 = time.time()
@@ -153,19 +142,22 @@ def eval_real(model, env, rollout_dir, norm_stats):
                 # plt.imsave(os.path.join(rollout_dir, f"wrist{t}.png"), obs["images"]["cam_right_wrist"])
 
                 qpos = np.array(obs["qpos"])
-                qpos = torch.from_numpy(qpos).float().unsqueeze(0).to(device)
+                qpos = torch.from_numpy(qpos).float().unsqueeze(0).to('cpu')
                 inference_t = time.time()
 
 
                 ### query policy
                 if t % query_frequency == 0:
 
-                    # right wrist data
                     data = {
                         "obs": {
-                            "wrist_img": (
-                                torch.from_numpy(obs["images"]["cam_wrist"][None, None, :])
-                            ).to(torch.uint8),
+                            # "wrist_img": (
+                            #     torch.from_numpy(obs["images"]["cam_left_wrist"][None, None, :])
+                            # ).to(torch.uint8),
+                            # CAM_KEY: torch.from_numpy(
+                            #     obs["images"]["cam_high"][None, None, :]
+                            # ).to(torch.uint8),
+
                             "pad_mask": torch.ones((1, 100, 1)).to(device).bool(),
                             "joint_positions": qpos[..., 7:].reshape((1, 1, -1)),
                         },
@@ -173,27 +165,66 @@ def eval_real(model, env, rollout_dir, norm_stats):
                     }
 
                     # add regular or line overlay top camera
-                    if CAM_KEY == "front_img_1":
-                        data["obs"][CAM_KEY] = torch.from_numpy(
-                            obs["images"]["cam_high"][None, None, :]
-                        ).to(torch.uint8)
-
-                    data["obs"]["joint_positions"] =  qpos[..., 7:].reshape((1, 1, -1))
+                    # data["obs"][CAM_KEY] = torch.from_numpy(
+                    #     obs["images"]["cam_high"][None, None, :]
+                    # ).to(torch.uint8)
                     
-                    if CAM_KEY == "front_img_1_line":
-                        _, line_image = sam.get_robot_mask_line_batched_from_qpos(obs["images"]["cam_high"][None, :], qpos, EXTRINSICS["ariaJul29"], ARIA_INTRINSICS)
+                    if arm == "both":
+                        data["obs"]["left_wrist_img"] = torch.from_numpy(obs["images"]["cam_left_wrist"][None, None, :]).to(torch.uint8)
+                        data["obs"]["right_wrist_img"] = torch.from_numpy(obs["images"]["cam_right_wrist"][None, None, :]).to(torch.uint8)
+                        data["obs"]["joint_positions"] = qpos[..., :].reshape((1, 1, -1))
+
+
+                        _, line_image = sam.get_robot_mask_line_batched_from_qpos(obs["images"]["cam_high"][None, :], qpos, EXTRINSICS["aria_jaka"], ARIA_INTRINSICS, arm=arm)
                         line_image = line_image[0]
                         data["obs"][CAM_KEY] = torch.from_numpy(
                             line_image[None, None, :]
                         ).to(torch.uint8)
 
-                    # postprocess_batch
-                    input_batch = model.process_batch_for_training(
-                        data, "actions_joints_act"
-                    )
+                        # postprocess_batch
+                        input_batch = model.process_batch_for_training(
+                            data, "actions_joints_act"
+                        )
 
-                    input_batch["obs"]["wrist_img"] = input_batch["obs"]["wrist_img"].permute(0, 3, 1, 2)
-                    input_batch["obs"]["wrist_img"] /= 255.0
+                        # right
+                        input_batch["obs"]["right_wrist_img"] = input_batch["obs"]["right_wrist_img"].permute(0, 3, 1, 2)/255.0
+
+                        # left
+                        input_batch["obs"]["left_wrist_img"] = input_batch["obs"]["left_wrist_img"].permute(0, 3, 1, 2)/255.0
+                    
+                    else:
+                        data["obs"][arm + "_wrist_img"] = torch.from_numpy(obs["images"][f"cam_{arm}_wrist"][None, None, :]).to(torch.uint8)
+                        data["obs"]["joint_positions"] =  qpos[..., :].reshape((1, 1, -1))
+                        
+                        _, line_image = sam.get_robot_mask_line_batched_from_qpos(obs["images"]["cam_high"][None, :], qpos, EXTRINSICS["aria_jaka"], ARIA_INTRINSICS, arm=arm)
+                        line_image = line_image[0]
+                        data["obs"][CAM_KEY] = torch.from_numpy(
+                            line_image[None, None, :]
+                        ).to(torch.uint8)
+
+                        # postprocess_batch
+                        input_batch = model.process_batch_for_training(
+                            data, "actions_joints_act"
+                        )
+                        input_batch["obs"][arm + "_wrist_img"] = input_batch["obs"][arm + "_wrist_img"].permute(0, 3, 1, 2)
+                        input_batch["obs"][arm + "_wrist_img"] /= 255.0
+
+                    # data["obs"]["joint_positions"] =  qpos[..., 7:].reshape((1, 1, -1))
+                    
+                    # if CAM_KEY == "front_img_1_line":
+                    #     _, line_image = sam.get_robot_mask_line_batched_from_qpos(obs["images"]["cam_high"][None, :], qpos, EXTRINSICS["ariaJul29"], ARIA_INTRINSICS)
+                    #     line_image = line_image[0]
+                    #     data["obs"][CAM_KEY] = torch.from_numpy(
+                    #         line_image[None, None, :]
+                    #     ).to(torch.uint8)
+
+                    # # postprocess_batch
+                    # input_batch = model.process_batch_for_training(
+                    #     data, "actions_joints_act"
+                    # )
+
+                    # input_batch["obs"]["wrist_img"] = input_batch["obs"]["wrist_img"].permute(0, 3, 1, 2)
+                    # input_batch["obs"]["wrist_img"] /= 255.0
                     
 
                     # breakpoint()
@@ -251,7 +282,9 @@ def eval_real(model, env, rollout_dir, norm_stats):
                     
                     print(f"Inference time: {time.time() - inference_t}")
 
+                print(all_actions.shape, t, query_frequency)
                 raw_action = all_actions[:, t % query_frequency]
+                print(all_actions.shape)
 
                 ### post-process actions
                 raw_action = raw_action[0]
@@ -261,7 +294,7 @@ def eval_real(model, env, rollout_dir, norm_stats):
 
                 ### step the environment
                 
-                ts = env.step(target_qpos)
+                ts = env.step(action=target_qpos)
 
                 # debugging control loop
                 qpos_t.append(ts.observation["qpos"])
@@ -289,11 +322,11 @@ def eval_real(model, env, rollout_dir, norm_stats):
         # write_vid(rollout_images, os.path.join(viz_dir, "video_0.mp4"))
         rollout_images = []
 
-        print("moving robot")
-        move_gripper(
-            env.robot, JAKA_GRIPPER_JOINT_OPEN, moving_time=0.5
-        )  # open
-        move_arms(env.robot, START_ARM_POSE[:6], moving_time=1.0)
+        print("Ending ...")
+        # move_gripper(
+        #     env.robot, JAKA_GRIPPER_JOINT_OPEN, moving_time=0.5
+        # )  # open
+        # move_arms(env.robot, START_ARM_POSE[:6], moving_time=1.0)
 
         time.sleep(12.0)
     return
@@ -317,15 +350,18 @@ def main(args):
     norm_stats = os.path.join(os.path.dirname(os.path.dirname(args.eval_path)), "ds1_norm_stats.pkl")
     norm_stats = open(norm_stats, "rb")
     norm_stats = pickle.load(norm_stats)
+
+    arm = "left"
+    if model.model.ac_dim == 14:
+        arm = "both"
     
-    robot = RC('192.168.0.75')
-    robot.login()
-    robot.power_on()
-    robot.enable_robot()
+    robot = JAKA('192.168.0.75')
+    robot.setup_robot()
+    # robot.servo_mode()
     print("Connected to robot and enabled it.")
     model.eval()
 
-    env = RealEnvJaka(robot)
+    env = RealEnvJaka(robot, use_ros=False)
 
     rollout_dir = os.path.dirname(os.path.dirname(args.eval_path))
     rollout_dir = os.path.join(rollout_dir, "rollouts")
@@ -335,7 +371,7 @@ def main(args):
     if not args.debug:
         rollout_dir = None
 
-    eval_real(model.model, env, rollout_dir, norm_stats)
+    eval_real(model.model, env, rollout_dir, norm_stats, arm)
 
 
 

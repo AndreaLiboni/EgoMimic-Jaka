@@ -343,7 +343,8 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False, mask=Fa
         ## adding images
         add_image_obs(demo_hdf5, demo_i_obs_group, "cam_high")
         if arm in ["left", "both"]:
-            add_image_obs(demo_hdf5, demo_i_obs_group, "cam_left_wrist")
+            pass
+            #add_image_obs(demo_hdf5, demo_i_obs_group, "cam_left_wrist")
         if arm in ["right", "both"]:
             add_image_obs(demo_hdf5, demo_i_obs_group, "cam_left_wrist")
         

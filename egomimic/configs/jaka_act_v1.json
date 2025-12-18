@@ -2,7 +2,7 @@
     "algo_name": "egomimic",
     "experiment": {
         "name": "pick_bustina",
-        "description": "pick_bustina_optimized",
+        "description": "v1",
         "validate": true,
         "logging": {
             "terminal_output_to_txt": true,
@@ -12,17 +12,17 @@
         "save": {
             "enabled": true,
             "every_n_seconds": null,
-            "every_n_epochs": 10,
+            "every_n_epochs": 5,
             "top_n": 5,
             "epochs": [],
             "on_best_validation": true,
             "on_best_rollout_return": false,
             "on_best_rollout_success_rate": true,
-            "video_freq": 50
+            "video_freq": 40
         },
         "epoch_every_n_steps": 100,
-        "validation_freq": 50,
-        "validation_max_samples": 1000,
+        "validation_freq": 15,
+        "validation_max_samples": 15000,
         "env": null,
         "additional_envs": null,
         "render": false,
@@ -43,8 +43,8 @@
         "data_type": "robot",
         "data_2": "./datasets/bowlplace_human.hdf5",
         "data_2_type": "hand",
-        "output_dir": "../trained_models_highlevel",
-        "num_data_workers": 2,
+        "output_dir":"../trained_models_highlevel",
+        "num_data_workers": 5,
         "hdf5_cache_mode": "low_dim",
         "hdf5_use_swmr": true,
         "hdf5_load_next_obs": false,
@@ -70,9 +70,10 @@
         ],
         "goal_mode": null,
         "cuda": true,
-        "batch_size": 10,
-        "num_epochs": 500,
-        "seed": 1
+        "batch_size": 5,
+        "num_epochs": 300,
+        "seed": 1,
+        "imagenet_normalize_images": true
     },
     "algo": {
         "optim_params": {
@@ -82,7 +83,7 @@
                     "initial": 5e-5,
                     "decay_factor": 1,
                     "epoch_schedule": [
-                        100
+                        5
                     ],
                     "scheduler_type": "linear"
                 },
@@ -97,12 +98,12 @@
             "cos_weight": 0.0
         },
         "act": {
-            "hidden_dim": 256,
-            "dim_feedforward": 1024,
+            "hidden_dim": 512,
+            "dim_feedforward": 3200,
             "backbone": "resnet18",
-            "enc_layers": 2,
-            "dec_layers": 4,
-            "nheads": 4,
+            "enc_layers": 4,
+            "dec_layers": 7,
+            "nheads": 8,
             "latent_dim": 32,
             "kl_weight": 20
         },
@@ -121,9 +122,7 @@
                 "low_dim": [
                     "ee_pose"
                 ],
-                "rgb": [
-                    "front_img_1_line"
-                ]
+                "rgb": ["front_img_1_line"]
             }
         }
     },
@@ -133,10 +132,7 @@
                 "low_dim": [
                     "joint_positions"
                 ],
-                "rgb": [
-                    "front_img_1_line",
-                    "left_wrist_img"
-                ],
+                "rgb": ["front_img_1_line", "left_wrist_img"],
                 "depth": [],
                 "scan": []
             },
@@ -173,18 +169,9 @@
                 },
                 "obs_randomizer_class": "CropRandomizer",
                 "obs_randomizer_kwargs": {
-                    "size": [
-                        240,
-                        320
-                    ],
-                    "scale": [
-                        0.9,
-                        1.0
-                    ],
-                    "ratio": [
-                        1.33,
-                        1.33
-                    ],
+                    "size": [240, 320],
+                    "scale": [0.9, 1.0],
+                    "ratio": [1.33, 1.33],
                     "num_crops": 1,
                     "pos_enc": false,
                     "brightness_min": 0.9,

@@ -14,8 +14,6 @@ from egomimic.utils.egomimicUtils import AlohaFK, JakaFK, ee_pose_to_cam_pixels,
 import cv2
 import random
 from PIL import Image
-from sam3.model_builder import build_sam3_image_model
-from sam3.model.sam3_image_processor import Sam3Processor
 
 def get_bounds(binary_image):
     # gray_image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -340,16 +338,16 @@ class SAM:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.predictor.set_image(image)
 
-        # img_point = image.copy()
-        # for i, (point, lb) in enumerate(zip(points, label)):
-        #     img_point = cv2.circle(
-        #         img_point,
-        #         (int(point[0]), int(point[1])),
-        #         radius=5,
-        #         color=(255, 255-(i*50), 0*lb),
-        #     )
-        # cv2.imwrite("img_point.png", img_point)
-        # cv2.waitKey(1)
+        img_point = image.copy()
+        for i, (point, lb) in enumerate(zip(points, label)):
+            img_point = cv2.circle(
+                img_point,
+                (int(point[0]), int(point[1])),
+                radius=5,
+                color=(255, 255-(i*50), 0*lb),
+            )
+        cv2.imwrite("img_point.png", img_point)
+        cv2.waitKey(1)
 
         masks, scores, logits = self.predictor.predict(
             point_coords=points,
@@ -363,7 +361,7 @@ class SAM:
         
         masked_img = image
         masked_img[masks[0] == 1] = 0
-        # cv2.imwrite("masked_img.png", image)
+        cv2.imwrite("masked_img.png", image)
         return masked_img, masks, scores, logits
     
 
@@ -542,15 +540,46 @@ class SAMJaka(SAM):
         if not use_sam3:
             super().__init__()
         else:
-            # Load the model
-            sam3_root ='external/sam3'
-            bpe_path = f"{sam3_root}/assets/bpe_simple_vocab_16e6.txt.gz"
-            model = build_sam3_image_model(bpe_path=bpe_path)
-            self.predictor = Sam3Processor(model)
+            EFFICENT_SAM3 = True
 
-            self.get_mask = self.get_mask_sam3
+            if EFFICENT_SAM3:
+                self.model = None
+                self.init_efficient_sam3()
+            else:
+                self.init_sam3()
+            
+        self.fk = JakaFK("jaka_s12_pinza_nera_real_joints.urdf")
 
-        self.fk = JakaFK("jaka_s12_pinza_nera_real.urdf")
+    
+    def init_efficient_sam3(self):
+        from sam3.model_builder import build_efficientsam3_image_model
+        from sam3.model.sam3_image_processor import Sam3Processor
+
+        # Load model
+        self.model = build_efficientsam3_image_model(
+            checkpoint_path="/run/media/Dati/Sviluppo/Università/Tesi/EgoMimic/egomimic/resources/efficient_sam3_efficientvit_s_sa_1b_1p.pt",
+            backbone_type="efficientvit",
+            model_name="b0",
+            #text_encoder_type="MobileCLIP-S1"
+        )
+
+        # Process image and predict
+        self.predictor = Sam3Processor(self.model)
+
+        self.get_mask = self.get_mask_efficient_sam3
+
+    
+    def init_sam3(self):
+        from sam3.model_builder import build_sam3_image_model
+        from sam3.model.sam3_image_processor import Sam3Processor
+
+        # Load the model
+        sam3_root ='external/sam3'
+        bpe_path = f"{sam3_root}/assets/bpe_simple_vocab_16e6.txt.gz"
+        model = build_sam3_image_model(bpe_path=bpe_path)
+        self.predictor = Sam3Processor(model)
+
+        self.get_mask = self.get_mask_sam3
     
     def project_single_joint_position_to_image(self, qpos, extrinsics, intrinsics, arm="right"):
         # Forward Kinematics to get all link transforms
@@ -657,8 +686,8 @@ class SAMJaka(SAM):
 
             # Visualization: Draw simple skeleton line
             line_img = masked_img.copy()
-            # Draw line from Base -> Shoulder -> Elbow -> Gripper (Simplified skeleton for visual)
-            skeleton_points = [p_elbow, p_wrist]
+
+            skeleton_points = [p_base, p_wrist]
             for j in range(len(skeleton_points) - 1):
                 p_start = (int(skeleton_points[j][0, 0]), int(skeleton_points[j][0, 1]))
                 p_end   = (int(skeleton_points[j+1][0, 0]), int(skeleton_points[j+1][0, 1]))
@@ -710,3 +739,42 @@ class SAMJaka(SAM):
         cv2.imwrite("masked_img.png", masked_img)
 
         return masked_img, masks, scores, boxes
+    
+
+    def get_mask_efficient_sam3(self, image, points, label):
+        """
+        Image:
+        Points: (N, 2) array containing x, y coordinates of the points
+        Label: (N) array containing 0 or 1 specifying negative or positive prompts
+        
+        Returns:
+        Masked image, masks, scores, logits
+        """
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        inference_state = self.predictor.set_image(image)
+
+        img_point = image.copy()
+        for i, (point, lb) in enumerate(zip(points, label)):
+            img_point = cv2.circle(
+                img_point,
+                (int(point[0]), int(point[1])),
+                radius=5,
+                color=(255, 255-(i*50), 0*lb),
+            )
+        cv2.imwrite("img_point.png", img_point)
+        cv2.waitKey(1)
+
+        masks, scores, logits = self.model.predict_inst(
+            inference_state,
+            point_coords=points,
+            point_labels=label,
+        )
+        sorted_ind = np.argsort(scores)[::-1]
+        masks = masks[sorted_ind]
+        scores = scores[sorted_ind]
+        logits = logits[sorted_ind]
+        
+        masked_img = image
+        masked_img[masks[0] == 1] = 0
+        cv2.imwrite("masked_img.png", image)
+        return masked_img, masks, scores, logits

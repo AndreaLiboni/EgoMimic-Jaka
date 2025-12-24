@@ -154,7 +154,7 @@ def get_negative_prompts(all_joint_points, img_shape, num_points=10, box_offset=
     return np.array(neg_points), np.zeros(len(neg_points))
 
 
-def interpolate_dense_path(points, density=5):
+def interpolate_dense_path(points, density=5, max_joints=None):
     """
     Interpolates points between an arbitrary number of sequential keypoints.
     
@@ -177,6 +177,9 @@ def interpolate_dense_path(points, density=5):
 
     # Iterate through each pair of points (0->1, 1->2, 2->3...)
     for i in range(len(points) - 1):
+        if i >= max_joints-1:
+            density = 0
+
         p_start = points[i]
         p_end = points[i+1]
         
@@ -663,8 +666,7 @@ class SAMJaka(SAM):
             # Interpolate if points are valid (not NaN)
             if not np.isnan(keypoints).any():
                 # interpolation adds intermediate points for SAM to track thin links better
-                density = 0  # Number of points between each keypoint
-                input_point, input_label = interpolate_dense_path(keypoints, density=density)
+                input_point, input_label = interpolate_dense_path(keypoints, density=3, max_joints=3)
 
                 # Filter points that are out of image bounds
                 input_point, input_label = get_valid_points(input_point, image.shape)

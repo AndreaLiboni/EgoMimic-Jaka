@@ -2,6 +2,7 @@ import pandas as pd
  
 # Read the CSV file
 csv_path = '/run/media/Dati/Sviluppo/Università/Tesi/EgoMimic/trained_models_highlevel/pick_bustina/None_DT_2025-12-09-13-21-12/logs/csv_logs/version_0/metrics.csv'
+# csv_path = '/run/media/Dati/Sviluppo/Università/Tesi/EgoMimic/trained_models_highlevel/pick_bustina/None_DT_2025-12-27-12-41-55/logs/csv_logs/version_0/metrics.csv'
 df = pd.read_csv(csv_path)
  
 # Plot the training loss

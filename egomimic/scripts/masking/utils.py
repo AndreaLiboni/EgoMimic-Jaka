@@ -341,16 +341,16 @@ class SAM:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.predictor.set_image(image)
 
-        img_point = image.copy()
-        for i, (point, lb) in enumerate(zip(points, label)):
-            img_point = cv2.circle(
-                img_point,
-                (int(point[0]), int(point[1])),
-                radius=5,
-                color=(255, 255-(i*50), 0*lb),
-            )
-        cv2.imwrite("img_point.png", img_point)
-        cv2.waitKey(1)
+        # img_point = image.copy()
+        # for i, (point, lb) in enumerate(zip(points, label)):
+        #     img_point = cv2.circle(
+        #         img_point,
+        #         (int(point[0]), int(point[1])),
+        #         radius=5,
+        #         color=(255, 255-(i*50), 0),
+        #     )
+        # cv2.imwrite("img_point.png", img_point)
+        # cv2.waitKey(1)
 
         masks, scores, logits = self.predictor.predict(
             point_coords=points,
@@ -364,7 +364,6 @@ class SAM:
         
         masked_img = image
         masked_img[masks[0] == 1] = 0
-        cv2.imwrite("masked_img.png", image)
         return masked_img, masks, scores, logits
     
 
@@ -666,7 +665,7 @@ class SAMJaka(SAM):
             # Interpolate if points are valid (not NaN)
             if not np.isnan(keypoints).any():
                 # interpolation adds intermediate points for SAM to track thin links better
-                input_point, input_label = interpolate_dense_path(keypoints, density=3, max_joints=3)
+                input_point, input_label = interpolate_dense_path(keypoints, density=0, max_joints=3)
 
                 # Filter points that are out of image bounds
                 input_point, input_label = get_valid_points(input_point, image.shape)
@@ -689,11 +688,12 @@ class SAMJaka(SAM):
             # Visualization: Draw simple skeleton line
             line_img = masked_img.copy()
 
-            skeleton_points = [p_base, p_wrist]
+            skeleton_points = [p_elbow, p_wrist]
             for j in range(len(skeleton_points) - 1):
                 p_start = (int(skeleton_points[j][0, 0]), int(skeleton_points[j][0, 1]))
                 p_end   = (int(skeleton_points[j+1][0, 0]), int(skeleton_points[j+1][0, 1]))
                 cv2.line(line_img, p_start, p_end, color=(255, 0, 0), thickness=15)
+            # cv2.imwrite("masked_img.png", line_img)
 
             mask_images[i] = masked_img
             line_images[i] = line_img

@@ -242,55 +242,44 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
 
 
                     if rollout_dir:
-                        # plot joint positions predictions
-                        plt.figure(figsize=(12, 8))
-                        for j in range(all_actions.shape[2]):
-                            plt.subplot(4, 4, j + 1)
-                            plt.plot(all_actions[0, :, j], label="predicted")
-                            plt.title(f"joint {j}")
-                            plt.legend()
-                        plt.tight_layout()
-                        plt.savefig(os.path.join(rollout_dir, f"joints_pred_t{t}.png"))
-                        plt.close()
+                        # Draw Actions
+                        im = data["obs"][CAM_KEY][0, 0].cpu().numpy()
+                        pred_values = info["actions_joints_act"][0].cpu().numpy()
 
-                        # # Draw Actions
-                        # im = data["obs"][CAM_KEY][0, 0].cpu().numpy()
-                        # pred_values = info["actions_joints_act"][0].cpu().numpy()
-
-                        # if "joints" in model.ac_key:
-                        #     pred_values_drawable = jaka_fk.fk(pred_values[:, :6])
-                        #     pred_values_drawable = ee_pose_to_cam_frame(pred_values_drawable, CURR_EXTRINSICS)
-                        # else:
-                        #     pred_values_drawable = pred_values
+                        if "joints" in model.ac_key:
+                            pred_values_drawable = jaka_fk.fk(pred_values[:, :6])
+                            pred_values_drawable = ee_pose_to_cam_frame(pred_values_drawable, CURR_EXTRINSICS[arm])
+                        else:
+                            pred_values_drawable = pred_values
 
 
-                        # pred_values_drawable = cam_frame_to_cam_pixels(
-                        #     pred_values_drawable, CURR_INTRINSICS
-                        # )
+                        pred_values_drawable = cam_frame_to_cam_pixels(
+                            pred_values_drawable, CURR_INTRINSICS
+                        )
 
-                        # im = np.array(im, dtype="uint8")
-                        # frame = draw_dot_on_frame(
-                        #     im, pred_values_drawable[[0, 10, 20, 30, 40, 50, 60, 70, 80, 90]], show=False, palette="Greens"
-                        # )
-
-
-                        # # Draw ee_pose
-                        # ee_pose_input = jaka_fk.fk(qpos[:, 7:13]).to(device)
-                        # ee_pose_cam_frame = ee_pose_to_cam_frame(
-                        #     ee_pose_input.cpu().numpy(), CURR_EXTRINSICS
-                        # )[:, None, :]
-                        # ee_pose_pixels = cam_frame_to_cam_pixels(
-                        #     ee_pose_cam_frame[0], CURR_INTRINSICS
-                        # )
-                        # frame = draw_dot_on_frame(
-                        #     frame, ee_pose_pixels, show=False, palette="Set1"
-                        # )
+                        im = np.array(im, dtype="uint8")
+                        frame = draw_dot_on_frame(
+                            im, pred_values_drawable[[0, 10, 20, 30, 40, 50, 60, 70, 80, 90]], show=False, palette="Greens"
+                        )
 
 
-                        # # Save images
-                        # rollout_images.append(frame)
-                        # plt.imsave(os.path.join(rollout_dir, f"viz{t}.png"), frame)
-                        # plt.imsave(os.path.join(rollout_dir, f"wrist_rgb{t}.png"), data["obs"]["right_wrist_img"][0, 0].cpu().numpy())
+                        # Draw ee_pose
+                        ee_pose_input = jaka_fk.fk(qpos[:, :6]).to(device)
+                        ee_pose_cam_frame = ee_pose_to_cam_frame(
+                            ee_pose_input.cpu().numpy(), CURR_EXTRINSICS[arm]
+                        )[:, None, :]
+                        ee_pose_pixels = cam_frame_to_cam_pixels(
+                            ee_pose_cam_frame[0], CURR_INTRINSICS
+                        )
+                        frame = draw_dot_on_frame(
+                            frame, ee_pose_pixels, show=False, palette="Set1"
+                        )
+
+
+                        # Save images
+                        rollout_images.append(frame)
+                        plt.imsave(os.path.join(rollout_dir, f"viz{t}.png"), frame)
+                        plt.imsave(os.path.join(rollout_dir, f"wrist_rgb{t}.png"), data["obs"]["right_wrist_img"][0, 0].cpu().numpy())
                     
                     print(f"Inference time: {time.time() - inference_t}")
 
@@ -304,7 +293,6 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
                 # target_qpos = action
 
                 ### step the environment
-                print(f"Raw action: {target_qpos}")
                 
                 ts = env.step(action=target_qpos)
 
@@ -363,7 +351,7 @@ def main(args):
     norm_stats = open(norm_stats, "rb")
     norm_stats = pickle.load(norm_stats)
 
-    arm = "left"
+    arm = "right"
     if model.model.ac_dim == 14:
         arm = "both"
     

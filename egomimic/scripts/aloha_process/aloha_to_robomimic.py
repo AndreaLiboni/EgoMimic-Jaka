@@ -315,7 +315,10 @@ def process_demo(demo_path, data_group, arm, extrinsics, prestack=False, mask=Fa
         right_extrinsics = extrinsics
     with h5py.File(demo_path, "r") as demo_hdf5:
         demo_number = demo_path.split("_")[-1].split(".")[0]
-        demo_i_group = data_group.create_group(f"demo_{demo_number}")
+        try:
+            demo_i_group = data_group.create_group(f"demo_{demo_number}")
+        except:
+            demo_i_group = data_group.create_group(f"demo_{int(demo_number)+1}")
         demo_i_group.attrs["num_samples"] = demo_hdf5["action"].shape[0]
         demo_i_obs_group = demo_i_group.create_group("obs")
 
@@ -390,6 +393,8 @@ def  main(args):
             aloha_demo_path = os.path.join(args.dataset, aloha_demo)
 
             process_demo(aloha_demo_path, data_group, args.arm, EXTRINSICS[args.extrinsics], args.prestack, args.mask)
+            # process_demo(aloha_demo_path, data_group, args.arm, EXTRINSICS[args.extrinsics], args.prestack, args.mask)
+
 
     split_train_val_from_hdf5(hdf5_path=args.out, val_ratio=0.2, filter_key=None)
 

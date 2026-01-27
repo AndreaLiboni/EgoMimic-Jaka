@@ -57,20 +57,20 @@ CURR_INTRINSICS = ARIA_INTRINSICS
 CURR_EXTRINSICS = EXTRINSICS["aria_jaka"]
 # NORM_STATS = to_torch(NORM_STATS, torch.device("cuda"))
 CAM_KEY = "front_img_1_line"
-TEMPORAL_AGG = False
+TEMPORAL_AGG = True
 
 
 class TemporalAgg:
-    def __init__(self):
+    def __init__(self, rollout_dir):
         self.recent_actions = []
+        self.rollout_dir = rollout_dir
     
     def add_action(self, action):
         """
             actions: (100, 7) tensor
         """
-        self.recent_actions.append(action)
-        if len(self.recent_actions) > 4:
-            del self.recent_actions[0]
+        if not len(self.recent_actions) > 4:
+            self.recent_actions.append(action)
 
     def smoothed_action(self):
         """
@@ -80,7 +80,6 @@ class TemporalAgg:
         count = 0
 
         shifted_actions = []
-        # breakpoint()
 
         for ac in self.recent_actions[::-1]:
             basic_mask = np.zeros(100)
@@ -95,18 +94,18 @@ class TemporalAgg:
         mask = ~(np.array(mask).astype(bool))
         recent_actions = shifted_actions[::-1]
         recent_actions = np.array(recent_actions)
-        # breakpoint()
         mask = np.repeat(mask[:, :, None], 7, axis=2)
         smoothed_action = np.ma.array(recent_actions, mask=mask).mean(axis=0)
 
-        # PLOT_JOINT = 0
-        # for i in range(recent_actions.shape[0]):
-        #     plt.plot(recent_actions[i, :, PLOT_JOINT], label=f"index{i}")
-        # plt.plot(smoothed_action[:, PLOT_JOINT], label="smooth")
-        # plt.legend()
-        # plt.savefig("smoothing.png")
-        # plt.close()
-        # breakpoint()
+        if self.rollout_dir is not None:
+            # plot smoothing
+            PLOT_JOINT = 3
+            for i in range(recent_actions.shape[0]):
+                plt.plot(recent_actions[i, :, PLOT_JOINT], label=f"index{i}")
+            plt.plot(smoothed_action[:, PLOT_JOINT], label="smooth")
+            plt.legend()
+            plt.savefig(os.path.join(self.rollout_dir, "smoothing.png"))
+            plt.close()
 
         return smoothed_action
 
@@ -116,7 +115,7 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
     jaka_fk = JakaFK()
     sam = SAMJaka()
 
-    query_frequency = 100
+    query_frequency = 50
 
 
     # max_timesteps = int(max_timesteps * 1)  # may increase for real-world tasks
@@ -124,7 +123,7 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
     num_rollouts = 1
     for rollout_id in range(num_rollouts):
         if TEMPORAL_AGG:
-            TA = TemporalAgg()
+            TA = TemporalAgg(rollout_dir)
 
         print("moving robot to start pose...")
         ts = env.reset()
@@ -132,8 +131,8 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
         t0 = time.time()
         with torch.inference_mode():
             rollout_images = []
-            for t in range(1000):
-                time.sleep(max(0, JAKA_DT*2 - (time.time() - t0)))
+            for t in range(400):
+                time.sleep(max(0, JAKA_DT - (time.time() - t0)))
                 # print(f"JAKA_DT: {time.time() - t0}")
                 t0 = time.time()
 
@@ -303,18 +302,18 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
         if rollout_dir:
             qpos_t = np.array(qpos_t)
             actions_t = np.array(actions_t)
-            for i in range(7, 14):
+            for i in range(7):
                 plt.plot(qpos_t[:, i], label=f"qpos joint {i}")
                 plt.plot(actions_t[:, i], label=f"ac joint {i}")
                 plt.legend()
 
-                plt.savefig(f"/home/rl2-bonjour/EgoPlay/EgoPlay/debug_ims/joint{i}_actions.png", dpi=300)
+                plt.savefig(os.path.join(rollout_dir, f"joint{i}_actions.png"), dpi=300)
                 plt.close()
 
                 plt.plot(actions_t[:, i] - qpos_t[:, i], label="error joint{i}")
                 plt.legend()
 
-                plt.savefig(f"/home/rl2-bonjour/EgoPlay/EgoPlay/debug_ims/joint{i}_error.png", dpi=300)
+                plt.savefig(os.path.join(rollout_dir, f"joint{i}_error.png"), dpi=300)
                 plt.close()
 
 
@@ -327,8 +326,6 @@ def eval_real(model, env, rollout_dir, norm_stats, arm):
         #     env.robot, JAKA_GRIPPER_JOINT_OPEN, moving_time=0.5
         # )  # open
         # move_arms(env.robot, START_ARM_POSE[:6], moving_time=1.0)
-
-        time.sleep(12.0)
     return
 
 

@@ -651,6 +651,10 @@ class SAMJaka(SAM):
             p_base     = pt1[[i]]
             p_shoulder = pt2[[i]]
             p_elbow    = pt3[[i]]
+            # If the camera is under the robot base
+            p_base     = np.array([[float(p_base[0,1]*-1), float(p_base[0,0]*-1)]])
+            p_shoulder = np.array([[float(p_shoulder[0,1]*-1), float(p_shoulder[0,0]*-1)]])
+            p_elbow    = np.array([[float(p_elbow[0,1]*-1), float(p_elbow[0,0]*-1)]])
             p_forearm  = pt4[[i]]
             p_wrist    = pt5[[i]]
             p_hand     = pt6[[i]]
@@ -665,30 +669,18 @@ class SAMJaka(SAM):
             # Interpolate if points are valid (not NaN)
             if not np.isnan(keypoints).any():
                 # interpolation adds intermediate points for SAM to track thin links better
-                input_point, input_label = interpolate_dense_path(keypoints, density=0, max_joints=3)
+                input_point, input_label = interpolate_dense_path(keypoints, density=0, max_joints=7)
 
                 # Filter points that are out of image bounds
                 input_point, input_label = get_valid_points(input_point, image.shape)
-
-            if input_point.size > 0:
-                # Add negative prompts (background) to help SAM differentiate
-                neg_points, neg_labels = get_negative_prompts(
-                    input_point, 
-                    images[i].shape, 
-                    num_points=0,   # Add 8 random background points
-                    box_offset=60 
-                )
-
-                final_points = np.concatenate([input_point, neg_points], axis=0)
-                final_labels = np.concatenate([input_label, neg_labels], axis=0)
-                
-                # Generate Mask
-                masked_img, masks, scores, logits = self.get_mask(masked_img, final_points, final_labels)
+                if input_point.size > 0:
+                    # Generate Mask
+                    masked_img, masks, scores, logits = self.get_mask(masked_img, input_point, input_label)
 
             # Visualization: Draw simple skeleton line
             line_img = masked_img.copy()
 
-            skeleton_points = [p_elbow, p_wrist]
+            skeleton_points = [p_elbow, p_hand]
             for j in range(len(skeleton_points) - 1):
                 p_start = (int(skeleton_points[j][0, 0]), int(skeleton_points[j][0, 1]))
                 p_end   = (int(skeleton_points[j+1][0, 0]), int(skeleton_points[j+1][0, 1]))
